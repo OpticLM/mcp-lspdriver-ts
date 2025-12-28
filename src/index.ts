@@ -1,0 +1,45 @@
+/**
+ * MCP LSP Driver SDK
+ *
+ * A TypeScript SDK for building IDE plugins that expose LSP features
+ * through the Model Context Protocol (MCP).
+ *
+ * @packageDocumentation
+ */
+
+// Capability Providers
+export type {
+  DefinitionProvider,
+  DiagnosticsProvider,
+  HierarchyProvider,
+  IdeCapabilities,
+  ReferencesProvider,
+} from './capabilities.js'
+
+// Infrastructure Interfaces
+export type {
+  FileAccessProvider,
+  UserInteractionProvider,
+} from './interfaces.js'
+export type { ResolverConfig } from './resolver.js'
+
+// Symbol Resolver
+export { SymbolResolutionError, SymbolResolver } from './resolver.js'
+export type { McpLspDriverConfig } from './server.js'
+
+// MCP Server
+export { McpLspDriver } from './server.js'
+// Core Data Models
+export type {
+  CodeSnippet,
+  Diagnostic,
+  DiagnosticSeverity,
+  DiskRange,
+  EditFailureReason,
+  EditResult,
+  ExactPosition,
+  FuzzyPosition,
+  PendingEditOperation,
+  TextEdit,
+  UnifiedUri,
+} from './types.js'
