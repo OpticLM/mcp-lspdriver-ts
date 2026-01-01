@@ -5,8 +5,7 @@
  * are defined in the IdeCapabilities configuration.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { IdeCapabilities } from './capabilities.js'
 import {
@@ -132,34 +131,41 @@ function generateEditId(): string {
  * Configuration options for the MCP LSP Driver.
  */
 export interface McpLspDriverConfig {
-  /** Name of the server (shown to clients) */
-  name?: string
-  /** Version of the server */
-  version?: string
   /** Configuration for the symbol resolver */
   resolverConfig?: ResolverConfig
 }
 
 /**
  * The main MCP LSP Driver class.
- * Wraps IDE capabilities and exposes them as MCP tools.
+ * Registers LSP-based tools on a user-provided MCP server.
+ *
+ * The server is owned and managed by the caller - the driver only registers
+ * tools on it. This allows the caller to configure the server with any
+ * transport and lifecycle management they prefer.
  */
 export class McpLspDriver {
   private readonly server: McpServer
   private readonly capabilities: IdeCapabilities
   private readonly resolver: SymbolResolver
 
-  constructor(capabilities: IdeCapabilities, config?: McpLspDriverConfig) {
+  /**
+   * Creates a new McpLspDriver and registers LSP tools on the provided server.
+   *
+   * @param server - The MCP server to register tools on (owned by caller)
+   * @param capabilities - IDE capabilities that determine which tools are available
+   * @param config - Optional configuration for the driver
+   */
+  constructor(
+    server: McpServer,
+    capabilities: IdeCapabilities,
+    config?: McpLspDriverConfig,
+  ) {
+    this.server = server
     this.capabilities = capabilities
     this.resolver = new SymbolResolver(
       capabilities.fileAccess,
       config?.resolverConfig,
     )
-
-    this.server = new McpServer({
-      name: config?.name ?? 'mcp-lsp-driver',
-      version: config?.version ?? '1.0.0',
-    })
 
     this.registerTools()
   }
@@ -456,22 +462,5 @@ export class McpLspDriver {
         }
       },
     )
-  }
-
-  /**
-   * Starts the MCP server using stdio transport.
-   * This is the standard way to run the server when spawned by a client.
-   */
-  async start(): Promise<void> {
-    const transport = new StdioServerTransport()
-    await this.server.connect(transport)
-  }
-
-  /**
-   * Returns the underlying McpServer instance for advanced usage.
-   * Use this if you need to connect with a custom transport.
-   */
-  getServer(): McpServer {
-    return this.server
   }
 }

@@ -1,3 +1,4 @@
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { describe, expect, it, vi } from 'vitest'
 import type {
   DefinitionProvider,
@@ -71,19 +72,27 @@ function createMockUserInteraction(approved = true): UserInteractionProvider {
   }
 }
 
+function createMockServer(): McpServer {
+  return new McpServer({
+    name: 'test-server',
+    version: '1.0.0',
+  })
+}
+
 describe('McpLspDriver', () => {
   describe('constructor', () => {
     it('should create instance with minimal capabilities', () => {
+      const server = createMockServer()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
-      expect(driver.getServer()).toBeDefined()
     })
 
     it('should create instance with all capabilities', () => {
+      const server = createMockServer()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         userInteraction: createMockUserInteraction(),
@@ -93,29 +102,17 @@ describe('McpLspDriver', () => {
         diagnostics: createMockDiagnosticsProvider(),
       }
 
-      const driver = new McpLspDriver(capabilities)
-      expect(driver).toBeDefined()
-    })
-
-    it('should accept custom server name and version', () => {
-      const capabilities: IdeCapabilities = {
-        fileAccess: createMockFileAccess(),
-      }
-
-      const driver = new McpLspDriver(capabilities, {
-        name: 'custom-server',
-        version: '2.0.0',
-      })
-
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
 
     it('should accept resolver config', () => {
+      const server = createMockServer()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
       }
 
-      const driver = new McpLspDriver(capabilities, {
+      const driver = new McpLspDriver(server, capabilities, {
         resolverConfig: {
           lineSearchRadius: 5,
         },
@@ -125,84 +122,76 @@ describe('McpLspDriver', () => {
     })
   })
 
-  describe('getServer', () => {
-    it('should return the underlying McpServer instance', () => {
-      const capabilities: IdeCapabilities = {
-        fileAccess: createMockFileAccess(),
-      }
-
-      const driver = new McpLspDriver(capabilities)
-      const server = driver.getServer()
-
-      expect(server).toBeDefined()
-      expect(typeof server.connect).toBe('function')
-    })
-  })
-
   describe('tool registration', () => {
     it('should not register tools when no optional capabilities are provided', () => {
+      const server = createMockServer()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
       }
 
       // McpLspDriver registers tools internally, we verify it doesn't throw
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
 
     it('should register goto_definition when definition provider is available', () => {
+      const server = createMockServer()
       const definitionProvider = createMockDefinitionProvider()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         definition: definitionProvider,
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
       // Tool registration is internal - we verify by checking the provider is used
     })
 
     it('should register find_references when references provider is available', () => {
+      const server = createMockServer()
       const referencesProvider = createMockReferencesProvider()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         references: referencesProvider,
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
 
     it('should register call_hierarchy when hierarchy provider is available', () => {
+      const server = createMockServer()
       const hierarchyProvider = createMockHierarchyProvider()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         hierarchy: hierarchyProvider,
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
 
     it('should register get_diagnostics when diagnostics provider is available', () => {
+      const server = createMockServer()
       const diagnosticsProvider = createMockDiagnosticsProvider()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         diagnostics: diagnosticsProvider,
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
 
     it('should register apply_edit when userInteraction provider is available', () => {
+      const server = createMockServer()
       const userInteraction = createMockUserInteraction()
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         userInteraction,
       }
 
-      const driver = new McpLspDriver(capabilities)
+      const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
   })
@@ -211,22 +200,24 @@ describe('McpLspDriver', () => {
 describe('normalizeUri (via server behavior)', () => {
   it('should handle Windows-style paths in tool inputs', () => {
     // This tests that the server normalizes paths correctly
+    const server = createMockServer()
     const files = { 'C:/Users/test/file.ts': 'const x = 1;' }
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(files),
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 
   it('should preserve file:// URIs', () => {
+    const server = createMockServer()
     const files = { 'file:///home/user/file.ts': 'const x = 1;' }
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(files),
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 })
@@ -248,13 +239,14 @@ describe('formatSnippetsAsMarkdown (via provider results)', () => {
       provideDefinition: vi.fn(async () => snippets),
     }
 
+    const server = createMockServer()
     const files = { 'test.ts': 'const x = 1;' }
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(files),
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
     // The formatting is tested indirectly through integration
   })
@@ -264,13 +256,14 @@ describe('formatSnippetsAsMarkdown (via provider results)', () => {
       provideDefinition: vi.fn(async () => []),
     }
 
+    const server = createMockServer()
     const files = { 'test.ts': 'const x = 1;' }
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(files),
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 })
@@ -320,12 +313,13 @@ describe('diagnostics formatting', () => {
       provideDiagnostics: vi.fn(async () => diagnostics),
     }
 
+    const server = createMockServer()
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(),
       diagnostics: diagnosticsProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 
@@ -348,18 +342,20 @@ describe('diagnostics formatting', () => {
       provideDiagnostics: vi.fn(async () => diagnostics),
     }
 
+    const server = createMockServer()
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(),
       diagnostics: diagnosticsProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 })
 
 describe('edit operations', () => {
   it('should create pending edit operation with correct structure', () => {
+    const server = createMockServer()
     const userInteraction = createMockUserInteraction(true)
     const files = { 'test.ts': 'const foo = 1;' }
 
@@ -368,11 +364,12 @@ describe('edit operations', () => {
       userInteraction,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 
   it('should handle user rejection of edits', () => {
+    const server = createMockServer()
     const userInteraction = createMockUserInteraction(false)
     const files = { 'test.ts': 'const foo = 1;' }
 
@@ -381,13 +378,14 @@ describe('edit operations', () => {
       userInteraction,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 })
 
 describe('error handling', () => {
   it('should handle SymbolResolutionError gracefully', () => {
+    const server = createMockServer()
     const definitionProvider = createMockDefinitionProvider()
     const files = { 'test.ts': 'const foo = 1;' }
 
@@ -396,11 +394,12 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 
   it('should handle file read errors', () => {
+    const server = createMockServer()
     const definitionProvider = createMockDefinitionProvider()
 
     const capabilities: IdeCapabilities = {
@@ -408,11 +407,12 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 
   it('should handle provider errors', () => {
+    const server = createMockServer()
     const definitionProvider: DefinitionProvider = {
       provideDefinition: vi.fn(async () => {
         throw new Error('Provider error')
@@ -425,7 +425,7 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(capabilities)
+    const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
   })
 })

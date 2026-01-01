@@ -20,17 +20,25 @@ pnpm add mcp-lsp-driver
 ## Quick Start
 
 ```typescript
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { McpLspDriver, type IdeCapabilities } from 'mcp-lsp-driver'
 import * as fs from 'fs/promises'
 
-// 1. Implement File Access (required)
+// 1. Create your MCP server
+const server = new McpServer({
+  name: 'my-ide-mcp-server',
+  version: '1.0.0'
+})
+
+// 2. Implement File Access (required)
 const fileAccess = {
   readFile: async (uri: string) => {
     return await fs.readFile(uri, 'utf-8')
   }
 }
 
-// 2. Implement User Interaction (required for edits)
+// 3. Implement User Interaction (required for edits)
 const userInteraction = {
   previewAndApplyEdits: async (operation) => {
     // Show diff in your IDE and get user approval
@@ -38,7 +46,7 @@ const userInteraction = {
   }
 }
 
-// 3. Implement LSP Capability Providers
+// 4. Implement LSP Capability Providers
 const definition = {
   provideDefinition: async (uri, position) => {
     // Call your IDE's LSP to get definition
@@ -46,7 +54,7 @@ const definition = {
   }
 }
 
-// 4. Initialize and start the driver
+// 5. Register LSP tools on the server
 const capabilities: IdeCapabilities = {
   fileAccess,
   userInteraction,
@@ -54,12 +62,11 @@ const capabilities: IdeCapabilities = {
   // Add more capabilities as needed
 }
 
-const driver = new McpLspDriver(capabilities, {
-  name: 'my-ide-mcp-server',
-  version: '1.0.0'
-})
+new McpLspDriver(server, capabilities)
 
-await driver.start()
+// 6. Connect to transport (you control the server lifecycle)
+const transport = new StdioServerTransport()
+await server.connect(transport)
 ```
 
 ## API Reference
@@ -198,7 +205,7 @@ The SDK uses a robust algorithm to handle imprecise LLM positioning:
 Configure the search radius:
 
 ```typescript
-const driver = new McpLspDriver(capabilities, {
+new McpLspDriver(server, capabilities, {
   resolverConfig: {
     lineSearchRadius: 5  // Default: 2
   }
