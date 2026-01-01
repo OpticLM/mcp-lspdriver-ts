@@ -29,8 +29,8 @@ export type { ResolverConfig } from './resolver.js'
 export { SymbolResolutionError, SymbolResolver } from './resolver.js'
 export type { McpLspDriverConfig } from './server.js'
 
-// MCP Server
-export { McpLspDriver } from './server.js'
+// Driver
+export { installMcpLspDriver } from './server.js'
 // Core Data Models
 export type {
   CodeSnippet,

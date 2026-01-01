@@ -47,341 +47,426 @@ export interface McpLspDriverConfig {
 }
 
 /**
- * The main MCP LSP Driver class.
- * Registers LSP-based tools on a user-provided MCP server.
- *
- * The server is owned and managed by the caller - the driver only registers
- * tools on it. This allows the caller to configure the server with any
- * transport and lifecycle management they prefer.
+ * Register LSP-based tools and resources on the provided MCP server.
  */
-export class McpLspDriver {
-  private readonly server: McpServer
-  private readonly capabilities: IdeCapabilities
-  private readonly resolver: SymbolResolver
+export function installMcpLspDriver({
+  server,
+  capabilities,
+  config,
+}: {
+  server: McpServer
+  capabilities: IdeCapabilities
+  config?: McpLspDriverConfig
+}) {
+  const resolver = new SymbolResolver(
+    capabilities.fileAccess,
+    config?.resolverConfig,
+  )
 
-  /**
-   * Creates a new McpLspDriver and registers LSP tools on the provided server.
-   *
-   * @param server - The MCP server to register tools on (owned by caller)
-   * @param capabilities - IDE capabilities that determine which tools are available
-   * @param config - Optional configuration for the driver
-   */
-  constructor(
-    server: McpServer,
-    capabilities: IdeCapabilities,
-    config?: McpLspDriverConfig,
-  ) {
-    this.server = server
-    this.capabilities = capabilities
-    this.resolver = new SymbolResolver(
-      capabilities.fileAccess,
-      config?.resolverConfig,
-    )
-
-    this.registerTools()
-    this.registerResources()
-  }
-
-  /**
-   * Registers all available tools based on the provided capabilities.
-   */
-  private registerTools(): void {
-    // Always register goto_definition if definition provider exists
-    if (this.capabilities.definition) {
-      this.registerGotoDefinitionTool()
-    }
-
-    // Register find_references if references provider exists
-    if (this.capabilities.references) {
-      this.registerFindReferencesTool()
-    }
-
-    // Register call_hierarchy if hierarchy provider exists
-    if (this.capabilities.hierarchy) {
-      this.registerCallHierarchyTool()
-    }
-
-    // Register apply_edit if user interaction provider exists
-    if (this.capabilities.userInteraction) {
-      this.registerApplyEditTool()
+  try {
+    registerTools(server, capabilities, resolver)
+  } catch (error) {
+    return {
+      success: false,
+      error,
+      reason: 'Error occured during registration of tools',
     }
   }
 
-  /**
-   * Registers all available resources based on the provided capabilities.
-   */
-  private registerResources(): void {
-    // Register diagnostics resources if diagnostics provider exists
-    if (this.capabilities.diagnostics) {
-      this.registerDiagnosticsResources()
-    }
-
-    // Register outline resource if outline provider exists
-    if (this.capabilities.outline) {
-      this.registerOutlineResource()
+  try {
+    registerResources(server, capabilities)
+  } catch (error) {
+    return {
+      success: false,
+      error,
+      reason: 'Error occured during registration of resources',
     }
   }
 
-  /**
-   * Registers the goto_definition tool.
-   */
-  private registerGotoDefinitionTool(): void {
-    const definitionProvider = this.capabilities.definition
-    if (!definitionProvider) return
+  return {
+    success: true,
+  }
+}
 
-    this.server.registerTool(
-      'goto_definition',
-      {
-        description:
-          'Navigate to the definition of a symbol. Resolves fuzzy position to exact coordinates.',
-        inputSchema: {
-          uri: FuzzyPositionSchema.shape.uri,
-          symbol_name: FuzzyPositionSchema.shape.symbol_name,
-          line_hint: FuzzyPositionSchema.shape.line_hint,
-          order_hint: FuzzyPositionSchema.shape.order_hint,
-        },
-        outputSchema: {
-          snippets: z.array(
-            z.object({
-              uri: z.string(),
-              startLine: z.number(),
-              endLine: z.number(),
-              content: z.string(),
-            }),
-          ),
-        },
+function registerTools(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+  resolver: SymbolResolver,
+): void {
+  if (capabilities.definition) {
+    registerGotoDefinitionTool(server, capabilities, resolver)
+  }
+
+  if (capabilities.references) {
+    registerFindReferencesTool(server, capabilities, resolver)
+  }
+
+  if (capabilities.hierarchy) {
+    registerCallHierarchyTool(server, capabilities, resolver)
+  }
+
+  if (capabilities.userInteraction) {
+    registerApplyEditTool(server, capabilities, resolver)
+  }
+}
+
+function registerResources(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  if (capabilities.diagnostics) {
+    registerDiagnosticsResources(server, capabilities)
+  }
+
+  if (capabilities.outline) {
+    registerOutlineResource(server, capabilities)
+  }
+}
+
+/**
+ * Registers the goto_definition tool.
+ */
+function registerGotoDefinitionTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+  resolver: SymbolResolver,
+): void {
+  const definitionProvider = capabilities.definition
+  if (!definitionProvider) return
+
+  server.registerTool(
+    'goto_definition',
+    {
+      description:
+        'Navigate to the definition of a symbol. Resolves fuzzy position to exact coordinates.',
+      inputSchema: {
+        uri: FuzzyPositionSchema.shape.uri,
+        symbol_name: FuzzyPositionSchema.shape.symbol_name,
+        line_hint: FuzzyPositionSchema.shape.line_hint,
+        order_hint: FuzzyPositionSchema.shape.order_hint,
       },
-      async (params) => {
-        try {
-          const uri = normalizeUri(params.uri)
-          const fuzzy: FuzzyPosition = {
-            symbolName: params.symbol_name,
-            lineHint: params.line_hint,
-            orderHint: params.order_hint,
-          }
-
-          const exactPosition = await this.resolver.resolvePosition(uri, fuzzy)
-          const snippets = await definitionProvider.provideDefinition(
-            uri,
-            exactPosition,
-          )
-          const markdown = formatSnippetsAsMarkdown(snippets)
-
-          const structuredSnippets = snippets.map((snippet) => ({
-            uri: snippet.uri,
-            startLine: snippet.range.start.line + 1,
-            endLine: snippet.range.end.line + 1,
-            content: snippet.content,
-          }))
-
-          return {
-            content: [{ type: 'text' as const, text: markdown }],
-            structuredContent: {
-              snippets: structuredSnippets,
-            },
-          }
-        } catch (error) {
-          const message =
-            error instanceof SymbolResolutionError
-              ? error.message
-              : `Error: ${error instanceof Error ? error.message : String(error)}`
-          return {
-            content: [{ type: 'text' as const, text: message }],
-            structuredContent: { error: message },
-            isError: true,
-          }
+      outputSchema: {
+        snippets: z.array(
+          z.object({
+            uri: z.string(),
+            startLine: z.number(),
+            endLine: z.number(),
+            content: z.string(),
+          }),
+        ),
+      },
+    },
+    async (params) => {
+      try {
+        const uri = normalizeUri(params.uri)
+        const fuzzy: FuzzyPosition = {
+          symbolName: params.symbol_name,
+          lineHint: params.line_hint,
+          orderHint: params.order_hint,
         }
-      },
-    )
-  }
 
-  /**
-   * Registers the find_references tool.
-   */
-  private registerFindReferencesTool(): void {
-    const referencesProvider = this.capabilities.references
-    if (!referencesProvider) return
+        const exactPosition = await resolver.resolvePosition(uri, fuzzy)
+        const snippets = await definitionProvider.provideDefinition(
+          uri,
+          exactPosition,
+        )
+        const markdown = formatSnippetsAsMarkdown(snippets)
 
-    this.server.registerTool(
-      'find_references',
-      {
-        description:
-          'Find all references to a symbol. Returns a list of locations where the symbol is used.',
-        inputSchema: {
-          uri: FuzzyPositionSchema.shape.uri,
-          symbol_name: FuzzyPositionSchema.shape.symbol_name,
-          line_hint: FuzzyPositionSchema.shape.line_hint,
-          order_hint: FuzzyPositionSchema.shape.order_hint,
-        },
-        outputSchema: {
-          snippets: z.array(
-            z.object({
-              uri: z.string(),
-              startLine: z.number(),
-              endLine: z.number(),
-              content: z.string(),
-            }),
-          ),
-        },
-      },
-      async (params) => {
-        try {
-          const uri = normalizeUri(params.uri)
-          const fuzzy: FuzzyPosition = {
-            symbolName: params.symbol_name,
-            lineHint: params.line_hint,
-            orderHint: params.order_hint,
-          }
+        const structuredSnippets = snippets.map((snippet) => ({
+          uri: snippet.uri,
+          startLine: snippet.range.start.line + 1,
+          endLine: snippet.range.end.line + 1,
+          content: snippet.content,
+        }))
 
-          const exactPosition = await this.resolver.resolvePosition(uri, fuzzy)
-          const snippets = await referencesProvider.provideReferences(
-            uri,
-            exactPosition,
-          )
-          const markdown = formatSnippetsAsMarkdown(snippets)
-
-          const structuredSnippets = snippets.map((snippet) => ({
-            uri: snippet.uri,
-            startLine: snippet.range.start.line + 1,
-            endLine: snippet.range.end.line + 1,
-            content: snippet.content,
-          }))
-
-          return {
-            content: [{ type: 'text' as const, text: markdown }],
-            structuredContent: {
-              snippets: structuredSnippets,
-            },
-          }
-        } catch (error) {
-          const message =
-            error instanceof SymbolResolutionError
-              ? error.message
-              : `Error: ${error instanceof Error ? error.message : String(error)}`
-          return {
-            content: [{ type: 'text' as const, text: message }],
-            structuredContent: { error: message },
-            isError: true,
-          }
+        return {
+          content: [{ type: 'text' as const, text: markdown }],
+          structuredContent: {
+            snippets: structuredSnippets,
+          },
         }
-      },
-    )
-  }
-
-  /**
-   * Registers the call_hierarchy tool.
-   */
-  private registerCallHierarchyTool(): void {
-    const hierarchyProvider = this.capabilities.hierarchy
-    if (!hierarchyProvider) return
-
-    this.server.registerTool(
-      'call_hierarchy',
-      {
-        description:
-          'Get call hierarchy for a function or method. Shows incoming (callers) or outgoing (callees) calls.',
-        inputSchema: {
-          uri: CallHierarchySchema.shape.uri,
-          symbol_name: CallHierarchySchema.shape.symbol_name,
-          line_hint: CallHierarchySchema.shape.line_hint,
-          order_hint: CallHierarchySchema.shape.order_hint,
-          direction: CallHierarchySchema.shape.direction,
-        },
-        outputSchema: {
-          snippets: z.array(
-            z.object({
-              uri: z.string(),
-              startLine: z.number(),
-              endLine: z.number(),
-              content: z.string(),
-            }),
-          ),
-        },
-      },
-      async (params) => {
-        try {
-          const uri = normalizeUri(params.uri)
-          const fuzzy: FuzzyPosition = {
-            symbolName: params.symbol_name,
-            lineHint: params.line_hint,
-            orderHint: params.order_hint,
-          }
-
-          const exactPosition = await this.resolver.resolvePosition(uri, fuzzy)
-          const snippets = await hierarchyProvider.provideCallHierarchy(
-            uri,
-            exactPosition,
-            params.direction,
-          )
-          const markdown = formatSnippetsAsMarkdown(snippets)
-
-          const structuredSnippets = snippets.map((snippet) => ({
-            uri: snippet.uri,
-            startLine: snippet.range.start.line + 1,
-            endLine: snippet.range.end.line + 1,
-            content: snippet.content,
-          }))
-
-          return {
-            content: [{ type: 'text' as const, text: markdown }],
-            structuredContent: {
-              snippets: structuredSnippets,
-            },
-          }
-        } catch (error) {
-          const message =
-            error instanceof SymbolResolutionError
-              ? error.message
-              : `Error: ${error instanceof Error ? error.message : String(error)}`
-          return {
-            content: [{ type: 'text' as const, text: message }],
-            structuredContent: { error: message },
-            isError: true,
-          }
+      } catch (error) {
+        const message =
+          error instanceof SymbolResolutionError
+            ? error.message
+            : `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: { error: message },
+          isError: true,
         }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the find_references tool.
+ */
+function registerFindReferencesTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+  resolver: SymbolResolver,
+): void {
+  const referencesProvider = capabilities.references
+  if (!referencesProvider) return
+
+  server.registerTool(
+    'find_references',
+    {
+      description:
+        'Find all references to a symbol. Returns a list of locations where the symbol is used.',
+      inputSchema: {
+        uri: FuzzyPositionSchema.shape.uri,
+        symbol_name: FuzzyPositionSchema.shape.symbol_name,
+        line_hint: FuzzyPositionSchema.shape.line_hint,
+        order_hint: FuzzyPositionSchema.shape.order_hint,
       },
-    )
-  }
-
-  /**
-   * Registers diagnostics resources.
-   * - lsp://diagnostics/{path} - diagnostics for a specific file
-   * - lsp://diagnostics/workspace - diagnostics for the entire workspace (if getWorkspaceDiagnostics is provided)
-   */
-  private registerDiagnosticsResources(): void {
-    const diagnosticsProvider = this.capabilities.diagnostics
-    if (!diagnosticsProvider) return
-
-    // Register file diagnostics resource template
-    const fileDiagnosticsTemplate = new ResourceTemplate(
-      'lsp://diagnostics/{+path}',
-      {
-        list: undefined, // Cannot enumerate all files with diagnostics
+      outputSchema: {
+        snippets: z.array(
+          z.object({
+            uri: z.string(),
+            startLine: z.number(),
+            endLine: z.number(),
+            content: z.string(),
+          }),
+        ),
       },
-    )
+    },
+    async (params) => {
+      try {
+        const uri = normalizeUri(params.uri)
+        const fuzzy: FuzzyPosition = {
+          symbolName: params.symbol_name,
+          lineHint: params.line_hint,
+          orderHint: params.order_hint,
+        }
 
-    this.server.registerResource(
-      'file-diagnostics',
-      fileDiagnosticsTemplate,
+        const exactPosition = await resolver.resolvePosition(uri, fuzzy)
+        const snippets = await referencesProvider.provideReferences(
+          uri,
+          exactPosition,
+        )
+        const markdown = formatSnippetsAsMarkdown(snippets)
+
+        const structuredSnippets = snippets.map((snippet) => ({
+          uri: snippet.uri,
+          startLine: snippet.range.start.line + 1,
+          endLine: snippet.range.end.line + 1,
+          content: snippet.content,
+        }))
+
+        return {
+          content: [{ type: 'text' as const, text: markdown }],
+          structuredContent: {
+            snippets: structuredSnippets,
+          },
+        }
+      } catch (error) {
+        const message =
+          error instanceof SymbolResolutionError
+            ? error.message
+            : `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: { error: message },
+          isError: true,
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the call_hierarchy tool.
+ */
+function registerCallHierarchyTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+  resolver: SymbolResolver,
+): void {
+  const hierarchyProvider = capabilities.hierarchy
+  if (!hierarchyProvider) return
+
+  server.registerTool(
+    'call_hierarchy',
+    {
+      description:
+        'Get call hierarchy for a function or method. Shows incoming (callers) or outgoing (callees) calls.',
+      inputSchema: {
+        uri: CallHierarchySchema.shape.uri,
+        symbol_name: CallHierarchySchema.shape.symbol_name,
+        line_hint: CallHierarchySchema.shape.line_hint,
+        order_hint: CallHierarchySchema.shape.order_hint,
+        direction: CallHierarchySchema.shape.direction,
+      },
+      outputSchema: {
+        snippets: z.array(
+          z.object({
+            uri: z.string(),
+            startLine: z.number(),
+            endLine: z.number(),
+            content: z.string(),
+          }),
+        ),
+      },
+    },
+    async (params) => {
+      try {
+        const uri = normalizeUri(params.uri)
+        const fuzzy: FuzzyPosition = {
+          symbolName: params.symbol_name,
+          lineHint: params.line_hint,
+          orderHint: params.order_hint,
+        }
+
+        const exactPosition = await resolver.resolvePosition(uri, fuzzy)
+        const snippets = await hierarchyProvider.provideCallHierarchy(
+          uri,
+          exactPosition,
+          params.direction,
+        )
+        const markdown = formatSnippetsAsMarkdown(snippets)
+
+        const structuredSnippets = snippets.map((snippet) => ({
+          uri: snippet.uri,
+          startLine: snippet.range.start.line + 1,
+          endLine: snippet.range.end.line + 1,
+          content: snippet.content,
+        }))
+
+        return {
+          content: [{ type: 'text' as const, text: markdown }],
+          structuredContent: {
+            snippets: structuredSnippets,
+          },
+        }
+      } catch (error) {
+        const message =
+          error instanceof SymbolResolutionError
+            ? error.message
+            : `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: { error: message },
+          isError: true,
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers diagnostics resources.
+ * - lsp://diagnostics/{path} - diagnostics for a specific file
+ * - lsp://diagnostics/workspace - diagnostics for the entire workspace (if getWorkspaceDiagnostics is provided)
+ */
+function registerDiagnosticsResources(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  const diagnosticsProvider = capabilities.diagnostics
+  if (!diagnosticsProvider) return
+
+  // Register file diagnostics resource template
+  const fileDiagnosticsTemplate = new ResourceTemplate(
+    'lsp://diagnostics/{+path}',
+    {
+      list: undefined, // Cannot enumerate all files with diagnostics
+    },
+  )
+
+  server.registerResource(
+    'file-diagnostics',
+    fileDiagnosticsTemplate,
+    {
+      description:
+        'Diagnostics (errors, warnings, hints) for a specific file. Use the file path after lsp://diagnostics/',
+      mimeType: 'text/markdown',
+    },
+    async (_uri, variables) => {
+      try {
+        const path = variables.path as string
+        const normalizedPath = normalizeUri(path)
+        const diagnostics =
+          await diagnosticsProvider.provideDiagnostics(normalizedPath)
+        const markdown = formatDiagnosticsAsMarkdown(diagnostics)
+
+        return {
+          contents: [
+            {
+              uri: `lsp://diagnostics/${path}`,
+              mimeType: 'text/markdown',
+              text: markdown,
+            },
+          ],
+        }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          contents: [
+            {
+              uri: `lsp://diagnostics/${variables.path}`,
+              mimeType: 'text/markdown',
+              text: message,
+            },
+          ],
+        }
+      }
+    },
+  )
+
+  // Register workspace diagnostics resource if getWorkspaceDiagnostics is provided
+  if (diagnosticsProvider.getWorkspaceDiagnostics) {
+    const getWorkspaceDiagnostics =
+      diagnosticsProvider.getWorkspaceDiagnostics.bind(diagnosticsProvider)
+
+    server.registerResource(
+      'workspace-diagnostics',
+      'lsp://diagnostics/workspace',
       {
         description:
-          'Diagnostics (errors, warnings, hints) for a specific file. Use the file path after lsp://diagnostics/',
+          'All diagnostics (errors, warnings, hints) across the entire workspace',
         mimeType: 'text/markdown',
       },
-      async (_uri, variables) => {
+      async () => {
         try {
-          const path = variables.path as string
-          const normalizedPath = normalizeUri(path)
-          const diagnostics =
-            await diagnosticsProvider.provideDiagnostics(normalizedPath)
-          const markdown = formatDiagnosticsAsMarkdown(diagnostics)
+          const diagnostics = await getWorkspaceDiagnostics()
+
+          // Group diagnostics by file
+          const groupedByFile = new Map<string, typeof diagnostics>()
+          for (const d of diagnostics) {
+            const existing = groupedByFile.get(d.uri) ?? []
+            existing.push(d)
+            groupedByFile.set(d.uri, existing)
+          }
+
+          if (groupedByFile.size === 0) {
+            return {
+              contents: [
+                {
+                  uri: 'lsp://diagnostics/workspace',
+                  mimeType: 'text/markdown',
+                  text: 'No diagnostics found in workspace.',
+                },
+              ],
+            }
+          }
+
+          // Format grouped diagnostics
+          const sections: string[] = []
+          for (const [uri, fileDiagnostics] of groupedByFile) {
+            sections.push(
+              `## ${uri}\n${formatDiagnosticsAsMarkdown(fileDiagnostics)}`,
+            )
+          }
 
           return {
             contents: [
               {
-                uri: `lsp://diagnostics/${path}`,
+                uri: 'lsp://diagnostics/workspace',
                 mimeType: 'text/markdown',
-                text: markdown,
+                text: sections.join('\n\n'),
               },
             ],
           }
@@ -390,7 +475,7 @@ export class McpLspDriver {
           return {
             contents: [
               {
-                uri: `lsp://diagnostics/${variables.path}`,
+                uri: 'lsp://diagnostics/workspace',
                 mimeType: 'text/markdown',
                 text: message,
               },
@@ -399,226 +484,160 @@ export class McpLspDriver {
         }
       },
     )
+  }
 
-    // Register workspace diagnostics resource if getWorkspaceDiagnostics is provided
-    if (diagnosticsProvider.getWorkspaceDiagnostics) {
-      const getWorkspaceDiagnostics =
-        diagnosticsProvider.getWorkspaceDiagnostics.bind(diagnosticsProvider)
-
-      this.server.registerResource(
-        'workspace-diagnostics',
-        'lsp://diagnostics/workspace',
-        {
-          description:
-            'All diagnostics (errors, warnings, hints) across the entire workspace',
-          mimeType: 'text/markdown',
-        },
-        async () => {
-          try {
-            const diagnostics = await getWorkspaceDiagnostics()
-
-            // Group diagnostics by file
-            const groupedByFile = new Map<string, typeof diagnostics>()
-            for (const d of diagnostics) {
-              const existing = groupedByFile.get(d.uri) ?? []
-              existing.push(d)
-              groupedByFile.set(d.uri, existing)
-            }
-
-            if (groupedByFile.size === 0) {
-              return {
-                contents: [
-                  {
-                    uri: 'lsp://diagnostics/workspace',
-                    mimeType: 'text/markdown',
-                    text: 'No diagnostics found in workspace.',
-                  },
-                ],
-              }
-            }
-
-            // Format grouped diagnostics
-            const sections: string[] = []
-            for (const [uri, fileDiagnostics] of groupedByFile) {
-              sections.push(
-                `## ${uri}\n${formatDiagnosticsAsMarkdown(fileDiagnostics)}`,
-              )
-            }
-
-            return {
-              contents: [
-                {
-                  uri: 'lsp://diagnostics/workspace',
-                  mimeType: 'text/markdown',
-                  text: sections.join('\n\n'),
-                },
-              ],
-            }
-          } catch (error) {
-            const message = `Error: ${error instanceof Error ? error.message : String(error)}`
-            return {
-              contents: [
-                {
-                  uri: 'lsp://diagnostics/workspace',
-                  mimeType: 'text/markdown',
-                  text: message,
-                },
-              ],
-            }
-          }
-        },
-      )
-    }
-
-    // Set up subscription support if onDiagnosticsChanged is provided
-    if (this.capabilities.onDiagnosticsChanged) {
-      this.capabilities.onDiagnosticsChanged((uri) => {
-        // Notify MCP clients that the diagnostics resource has been updated
-        const normalizedUri = normalizeUri(uri)
-        this.server.server.sendResourceUpdated({
-          uri: `lsp://diagnostics/${normalizedUri}`,
-        })
-        // Also notify workspace diagnostics if it exists
-        if (diagnosticsProvider.getWorkspaceDiagnostics) {
-          this.server.server.sendResourceUpdated({
-            uri: 'lsp://diagnostics/workspace',
-          })
-        }
+  // Set up subscription support if onDiagnosticsChanged is provided
+  if (capabilities.onDiagnosticsChanged) {
+    capabilities.onDiagnosticsChanged((uri) => {
+      // Notify MCP clients that the diagnostics resource has been updated
+      const normalizedUri = normalizeUri(uri)
+      server.server.sendResourceUpdated({
+        uri: `lsp://diagnostics/${normalizedUri}`,
       })
-    }
-  }
-
-  /**
-   * Registers the outline resource.
-   * - lsp://outline/{path} - document symbols (outline) for a specific file
-   */
-  private registerOutlineResource(): void {
-    const outlineProvider = this.capabilities.outline
-    if (!outlineProvider) return
-
-    const outlineTemplate = new ResourceTemplate('lsp://outline/{+path}', {
-      list: undefined, // Cannot enumerate all files
+      // Also notify workspace diagnostics if it exists
+      if (diagnosticsProvider.getWorkspaceDiagnostics) {
+        server.server.sendResourceUpdated({
+          uri: 'lsp://diagnostics/workspace',
+        })
+      }
     })
-
-    this.server.registerResource(
-      'file-outline',
-      outlineTemplate,
-      {
-        description:
-          'Document outline (symbols like classes, functions, variables) for a specific file. Use the file path after lsp://outline/',
-        mimeType: 'text/markdown',
-      },
-      async (_uri, variables) => {
-        try {
-          const path = variables.path as string
-          const normalizedPath = normalizeUri(path)
-          const symbols =
-            await outlineProvider.provideDocumentSymbols(normalizedPath)
-          const markdown = formatSymbolsAsMarkdown(symbols)
-
-          return {
-            contents: [
-              {
-                uri: `lsp://outline/${path}`,
-                mimeType: 'text/markdown',
-                text: markdown,
-              },
-            ],
-          }
-        } catch (error) {
-          const message = `Error: ${error instanceof Error ? error.message : String(error)}`
-          return {
-            contents: [
-              {
-                uri: `lsp://outline/${variables.path}`,
-                mimeType: 'text/markdown',
-                text: message,
-              },
-            ],
-          }
-        }
-      },
-    )
   }
+}
 
-  /**
-   * Registers the apply_edit tool.
-   */
-  private registerApplyEditTool(): void {
-    const userInteraction = this.capabilities.userInteraction
-    if (!userInteraction) return
+/**
+ * Registers the outline resource.
+ * - lsp://outline/{path} - document symbols (outline) for a specific file
+ */
+function registerOutlineResource(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  const outlineProvider = capabilities.outline
+  if (!outlineProvider) return
 
-    this.server.registerTool(
-      'apply_edit',
-      {
-        description:
-          'Apply a text edit to a file. The edit must be approved by the user before being applied.',
-        inputSchema: {
-          uri: ApplyEditSchema.shape.uri,
-          search_text: ApplyEditSchema.shape.search_text,
-          replace_text: ApplyEditSchema.shape.replace_text,
-          description: ApplyEditSchema.shape.description,
-        },
-        outputSchema: {
-          success: z.boolean(),
-          message: z.string(),
-          reason: z.string().optional(),
-        },
-      },
-      async (params) => {
-        try {
-          const uri = normalizeUri(params.uri)
+  const outlineTemplate = new ResourceTemplate('lsp://outline/{+path}', {
+    list: undefined, // Cannot enumerate all files
+  })
 
-          // Validate that the search text exists and is unique
-          const range = await this.resolver.findExactText(
-            uri,
-            params.search_text,
-          )
+  server.registerResource(
+    'file-outline',
+    outlineTemplate,
+    {
+      description:
+        'Document outline (symbols like classes, functions, variables) for a specific file. Use the file path after lsp://outline/',
+      mimeType: 'text/markdown',
+    },
+    async (_uri, variables) => {
+      try {
+        const path = variables.path as string
+        const normalizedPath = normalizeUri(path)
+        const symbols =
+          await outlineProvider.provideDocumentSymbols(normalizedPath)
+        const markdown = formatSymbolsAsMarkdown(symbols)
 
-          // Create pending edit operation
-          const operation: PendingEditOperation = {
-            id: generateEditId(),
-            uri,
-            edits: [
-              {
-                range,
-                newText: params.replace_text,
-              },
-            ],
-            description: params.description,
-          }
-
-          // Request user approval
-          const approved = await userInteraction.previewAndApplyEdits(operation)
-
-          const result: EditResult = approved
-            ? { success: true, message: 'Edit successfully applied and saved.' }
-            : {
-                success: false,
-                message: 'Edit rejected by user.',
-              }
-
-          const structuredResult = {
-            success: result.success,
-            message: result.message,
-          }
-
-          return {
-            content: [{ type: 'text' as const, text: result.message }],
-            structuredContent: structuredResult,
-          }
-        } catch (error) {
-          const message = `Error: ${error instanceof Error ? error.message : String(error)}`
-          return {
-            content: [{ type: 'text' as const, text: message }],
-            structuredContent: {
-              success: false,
-              message,
+        return {
+          contents: [
+            {
+              uri: `lsp://outline/${path}`,
+              mimeType: 'text/markdown',
+              text: markdown,
             },
-            isError: true,
-          }
+          ],
         }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          contents: [
+            {
+              uri: `lsp://outline/${variables.path}`,
+              mimeType: 'text/markdown',
+              text: message,
+            },
+          ],
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the apply_edit tool.
+ */
+function registerApplyEditTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+  resolver: SymbolResolver,
+): void {
+  const userInteraction = capabilities.userInteraction
+  if (!userInteraction) return
+
+  server.registerTool(
+    'apply_edit',
+    {
+      description:
+        'Apply a text edit to a file. The edit must be approved by the user before being applied.',
+      inputSchema: {
+        uri: ApplyEditSchema.shape.uri,
+        search_text: ApplyEditSchema.shape.search_text,
+        replace_text: ApplyEditSchema.shape.replace_text,
+        description: ApplyEditSchema.shape.description,
       },
-    )
-  }
+      outputSchema: {
+        success: z.boolean(),
+        message: z.string(),
+        reason: z.string().optional(),
+      },
+    },
+    async (params) => {
+      try {
+        const uri = normalizeUri(params.uri)
+
+        // Validate that the search text exists and is unique
+        const range = await resolver.findExactText(uri, params.search_text)
+
+        // Create pending edit operation
+        const operation: PendingEditOperation = {
+          id: generateEditId(),
+          uri,
+          edits: [
+            {
+              range,
+              newText: params.replace_text,
+            },
+          ],
+          description: params.description,
+        }
+
+        // Request user approval
+        const approved = await userInteraction.previewAndApplyEdits(operation)
+
+        const result: EditResult = approved
+          ? { success: true, message: 'Edit successfully applied and saved.' }
+          : {
+              success: false,
+              message: 'Edit rejected by user.',
+            }
+
+        const structuredResult = {
+          success: result.success,
+          message: result.message,
+        }
+
+        return {
+          content: [{ type: 'text' as const, text: result.message }],
+          structuredContent: structuredResult,
+        }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: {
+            success: false,
+            message,
+          },
+          isError: true,
+        }
+      }
+    },
+  )
 }

@@ -22,7 +22,7 @@ pnpm add mcp-lsp-driver
 ```typescript
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { McpLspDriver, type IdeCapabilities } from 'mcp-lsp-driver'
+import { installMcpLspDriver, type IdeCapabilities } from 'mcp-lsp-driver'
 import * as fs from 'fs/promises'
 
 // 1. Create your MCP server
@@ -86,7 +86,7 @@ const capabilities: IdeCapabilities = {
   // Add more capabilities as needed
 }
 
-new McpLspDriver(server, capabilities)
+installMcpLspDriver({ server, capabilities })
 
 // 6. Connect to transport (you control the server lifecycle)
 const transport = new StdioServerTransport()
@@ -299,11 +299,11 @@ The SDK uses a robust algorithm to handle imprecise LLM positioning:
 Configure the search radius:
 
 ```typescript
-new McpLspDriver(server, capabilities, {
+installMcpLspDriver({ server, capabilities, config: {
   resolverConfig: {
     lineSearchRadius: 5  // Default: 2
   }
-})
+}})
 ```
 
 ## Type Definitions

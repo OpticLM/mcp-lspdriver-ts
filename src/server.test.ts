@@ -15,7 +15,7 @@ import type {
   FileAccessProvider,
   UserInteractionProvider,
 } from './interfaces.js'
-import { McpLspDriver } from './server.js'
+import { installMcpLspDriver } from './server.js'
 import type { CodeSnippet, Diagnostic, DocumentSymbol } from './types.js'
 
 const mockFiles = {
@@ -117,8 +117,8 @@ describe('McpLspDriver', () => {
         fileAccess: createMockFileAccess(),
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should create instance with all capabilities', () => {
@@ -133,8 +133,8 @@ describe('McpLspDriver', () => {
         outline: createMockOutlineProvider(),
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should accept resolver config', () => {
@@ -143,13 +143,17 @@ describe('McpLspDriver', () => {
         fileAccess: createMockFileAccess(),
       }
 
-      const driver = new McpLspDriver(server, capabilities, {
-        resolverConfig: {
-          lineSearchRadius: 5,
+      const { success } = installMcpLspDriver({
+        server,
+        capabilities,
+        config: {
+          resolverConfig: {
+            lineSearchRadius: 5,
+          },
         },
       })
 
-      expect(driver).toBeDefined()
+      expect(success).toBeTruthy()
     })
   })
 
@@ -161,8 +165,8 @@ describe('McpLspDriver', () => {
       }
 
       // McpLspDriver registers tools internally, we verify it doesn't throw
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should register goto_definition when definition provider is available', async () => {
@@ -173,8 +177,8 @@ describe('McpLspDriver', () => {
         definition: definitionProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       const client = await createAndConnectMockClient(server)
       const r = await client.callTool({
@@ -201,8 +205,8 @@ describe('McpLspDriver', () => {
         references: referencesProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should register find_references and return formatted results when called', async () => {
@@ -236,8 +240,8 @@ describe('McpLspDriver', () => {
         references: referencesProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       const client = await createAndConnectMockClient(server)
       const r = await client.callTool({
@@ -274,8 +278,8 @@ describe('McpLspDriver', () => {
         hierarchy: hierarchyProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should register call_hierarchy and return formatted results when called', async () => {
@@ -311,8 +315,8 @@ describe('McpLspDriver', () => {
         hierarchy: hierarchyProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       const client = await createAndConnectMockClient(server)
       const r = await client.callTool({
@@ -363,8 +367,8 @@ describe('McpLspDriver', () => {
         diagnostics: diagnosticsProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       // Verify the provider returns the expected diagnostics
       const result = await diagnosticsProvider.provideDiagnostics('test.ts')
@@ -405,8 +409,8 @@ describe('McpLspDriver', () => {
         diagnostics: diagnosticsProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       // Verify workspace diagnostics can be retrieved
       if (diagnosticsProvider.getWorkspaceDiagnostics) {
@@ -465,8 +469,8 @@ describe('McpLspDriver', () => {
         outline: outlineProvider,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       // Verify the outline provider returns the expected symbols
       const result = await outlineProvider.provideDocumentSymbols('test.ts')
@@ -486,8 +490,8 @@ describe('McpLspDriver', () => {
         userInteraction,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
     })
 
     it('should register apply_edit and return result when user approves', async () => {
@@ -499,8 +503,8 @@ describe('McpLspDriver', () => {
         userInteraction,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       const client = await createAndConnectMockClient(server)
       const r = await client.callTool({
@@ -527,8 +531,8 @@ describe('McpLspDriver', () => {
         userInteraction,
       }
 
-      const driver = new McpLspDriver(server, capabilities)
-      expect(driver).toBeDefined()
+      const { success } = installMcpLspDriver({ server, capabilities })
+      expect(success).toBeTruthy()
 
       const client = await createAndConnectMockClient(server)
       const r = await client.callTool({
@@ -562,8 +566,8 @@ describe('diagnostics subscription', () => {
       },
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
     expect(registeredCallback).toBeDefined()
   })
 })
@@ -579,8 +583,8 @@ describe('edit operations', () => {
       userInteraction,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
   })
 
   it('should handle user rejection of edits', () => {
@@ -593,8 +597,8 @@ describe('edit operations', () => {
       userInteraction,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
   })
 })
 
@@ -609,8 +613,8 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
   })
 
   it('should handle file read errors', () => {
@@ -622,8 +626,8 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
   })
 
   it('should handle provider errors', () => {
@@ -640,8 +644,8 @@ describe('error handling', () => {
       definition: definitionProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
   })
 })
 
@@ -667,8 +671,8 @@ describe('resource integration', () => {
       diagnostics: diagnosticsProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
     const r = await client.readResource({ uri: 'lsp://diagnostics/test.ts' })
@@ -711,8 +715,8 @@ describe('resource integration', () => {
       diagnostics: diagnosticsProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
     const r = await client.readResource({ uri: 'lsp://diagnostics/workspace' })
@@ -764,8 +768,8 @@ describe('resource integration', () => {
       outline: outlineProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
     const r = await client.readResource({ uri: 'lsp://outline/test.ts' })
@@ -828,8 +832,8 @@ describe('resource integration', () => {
       outline: outlineProvider,
     }
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
     const r = await client.readResource({ uri: 'lsp://outline/test.ts' })
