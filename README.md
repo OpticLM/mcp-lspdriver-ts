@@ -54,11 +54,35 @@ const definition = {
   }
 }
 
-// 5. Register LSP tools on the server
+const diagnostics = {
+  provideDiagnostics: async (uri) => {
+    // Get diagnostics from your IDE for the file
+    return await lspClient.getDiagnostics(uri)
+  },
+  getWorkspaceDiagnostics: async () => {
+    // Optional: Get all diagnostics in the workspace
+    return await lspClient.getWorkspaceDiagnostics()
+  }
+}
+
+const outline = {
+  provideDocumentSymbols: async (uri) => {
+    // Get document symbols from your IDE
+    return await lspClient.getDocumentSymbols(uri)
+  }
+}
+
+// 5. Register LSP tools and resources on the server
 const capabilities: IdeCapabilities = {
   fileAccess,
   userInteraction,
   definition,
+  diagnostics,
+  outline,
+  onDiagnosticsChanged: (callback) => {
+    // Register for diagnostic changes
+    yourIDE.onDiagnosticsChanged((uri) => callback(uri))
+  },
   // Add more capabilities as needed
 }
 
@@ -130,6 +154,15 @@ interface HierarchyProvider {
 ```typescript
 interface DiagnosticsProvider {
   provideDiagnostics(uri: UnifiedUri): Promise<Diagnostic[]>
+  getWorkspaceDiagnostics?(): Promise<Diagnostic[]>  // Optional workspace diagnostics
+}
+```
+
+#### `OutlineProvider`
+
+```typescript
+interface OutlineProvider {
+  provideDocumentSymbols(uri: UnifiedUri): Promise<DocumentSymbol[]>
 }
 ```
 
@@ -144,7 +177,9 @@ interface IdeCapabilities {
   definition?: DefinitionProvider           // Enables goto_definition tool
   references?: ReferencesProvider           // Enables find_references tool
   hierarchy?: HierarchyProvider             // Enables call_hierarchy tool
-  diagnostics?: DiagnosticsProvider         // Enables get_diagnostics tool
+  diagnostics?: DiagnosticsProvider         // Enables diagnostics resources
+  outline?: OutlineProvider                 // Enables outline resource
+  onDiagnosticsChanged?: (callback: OnDiagnosticsChangedCallback) => void
 }
 ```
 
@@ -176,13 +211,6 @@ Get call hierarchy for a function or method.
 - Same as `goto_definition`, plus:
 - `direction`: `'incoming'` (callers) or `'outgoing'` (callees)
 
-### `get_diagnostics`
-
-Get diagnostics (errors, warnings) for a file.
-
-**Inputs:**
-- `uri`: File path or URI
-
 ### `apply_edit`
 
 Apply a text edit to a file (requires user approval).
@@ -192,6 +220,72 @@ Apply a text edit to a file (requires user approval).
 - `search_text`: Exact text to replace (must be unique in file)
 - `replace_text`: New text to insert
 - `description`: Rationale for the edit
+
+## MCP Resources
+
+The SDK automatically registers resources based on which capabilities you provide:
+
+### `lsp://diagnostics/{path}`
+
+Get diagnostics (errors, warnings) for a specific file.
+
+**Resource URI Pattern:** `lsp://diagnostics/{path}`
+
+**Example:** `lsp://diagnostics/src/main.ts`
+
+Returns diagnostics formatted as markdown with location, severity, and message information.
+
+**Subscription Support:** If your IDE implements `onDiagnosticsChanged` capability, these resources become subscribable. When diagnostics change, the driver sends resource update notifications.
+
+### `lsp://diagnostics/workspace`
+
+Get diagnostics across the entire workspace.
+
+**Resource URI:** `lsp://diagnostics/workspace`
+
+Only available if your `DiagnosticsProvider` implements the optional `getWorkspaceDiagnostics()` method.
+
+Returns workspace diagnostics grouped by file, formatted as markdown.
+
+**Subscription Support:** If your IDE implements `onDiagnosticsChanged` capability, this resource becomes subscribable.
+
+### `lsp://outline/{path}`
+
+Get the document outline (symbol tree) for a file.
+
+**Resource URI Pattern:** `lsp://outline/{path}`
+
+**Example:** `lsp://outline/src/components/Button.tsx`
+
+Returns document symbols formatted as a hierarchical markdown outline, including:
+- Symbol names and kinds (class, function, method, etc.)
+- Source locations
+- Nested children (e.g., methods within classes)
+
+No subscription support for this resource (read-only).
+
+## Subscription and Change Notifications
+
+When your IDE supports the `onDiagnosticsChanged` capability, diagnostic resources become subscribable:
+
+```typescript
+const capabilities: IdeCapabilities = {
+  fileAccess,
+  diagnostics: {
+    provideDiagnostics: async (uri) => { /* ... */ },
+    getWorkspaceDiagnostics: async () => { /* ... */ }
+  },
+  onDiagnosticsChanged: (callback) => {
+    // Register your IDE's diagnostic change listener
+    yourIDE.onDiagnosticsChanged((uri) => {
+      // Call the callback when diagnostics change
+      callback(uri)
+    })
+  }
+}
+```
+
+When diagnostics change, call the registered callback with the affected file URI. The driver will send MCP resource update notifications to subscribers.
 
 ## Symbol Resolution
 

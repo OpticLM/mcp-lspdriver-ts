@@ -105,9 +105,7 @@ export type EditFailureReason = 'UserRejected' | 'IOError' | 'ValidationFailed'
 /**
  * The result of an edit operation.
  */
-export type EditResult =
-  | { success: true; message: string }
-  | { success: false; message: string; reason: EditFailureReason }
+export type EditResult = { success: boolean; message: string }
 
 // ============================================================================
 // Diagnostic Types
@@ -134,4 +132,57 @@ export interface Diagnostic {
   source?: string
   /** Optional diagnostic code */
   code?: string | number
+}
+
+// ============================================================================
+// Outline Types
+// ============================================================================
+
+/**
+ * Symbol kind for outline items.
+ */
+export type SymbolKind =
+  | 'file'
+  | 'module'
+  | 'namespace'
+  | 'package'
+  | 'class'
+  | 'method'
+  | 'property'
+  | 'field'
+  | 'constructor'
+  | 'enum'
+  | 'interface'
+  | 'function'
+  | 'variable'
+  | 'constant'
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'array'
+  | 'object'
+  | 'key'
+  | 'null'
+  | 'enumMember'
+  | 'struct'
+  | 'event'
+  | 'operator'
+  | 'typeParameter'
+
+/**
+ * Represents a symbol in the document outline (e.g., class, function, variable).
+ */
+export interface DocumentSymbol {
+  /** The name of the symbol */
+  name: string
+  /** More detail for this symbol (e.g., signature) */
+  detail?: string
+  /** The kind of this symbol */
+  kind: SymbolKind
+  /** The range of the entire symbol (including body) */
+  range: DiskRange
+  /** The range of the symbol's name */
+  selectionRange: DiskRange
+  /** Children of this symbol (e.g., methods in a class) */
+  children?: DocumentSymbol[]
 }

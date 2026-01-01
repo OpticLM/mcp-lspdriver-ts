@@ -13,6 +13,8 @@ export type {
   DiagnosticsProvider,
   HierarchyProvider,
   IdeCapabilities,
+  OnDiagnosticsChangedCallback,
+  OutlineProvider,
   ReferencesProvider,
 } from './capabilities.js'
 
@@ -35,11 +37,13 @@ export type {
   Diagnostic,
   DiagnosticSeverity,
   DiskRange,
+  DocumentSymbol,
   EditFailureReason,
   EditResult,
   ExactPosition,
   FuzzyPosition,
   PendingEditOperation,
+  SymbolKind,
   TextEdit,
   UnifiedUri,
 } from './types.js'

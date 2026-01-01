@@ -15,6 +15,7 @@ import type {
 import type {
   CodeSnippet,
   Diagnostic,
+  DocumentSymbol,
   ExactPosition,
   UnifiedUri,
 } from './types.js'
@@ -87,11 +88,38 @@ export interface DiagnosticsProvider {
    * @returns Array of diagnostics for the file
    */
   provideDiagnostics(uri: UnifiedUri): Promise<Diagnostic[]>
+
+  /**
+   * Gets diagnostics for all files in the workspace.
+   * If not provided, the workspace diagnostics resource will not be available.
+   *
+   * @returns Array of diagnostics for all files in the workspace
+   */
+  getWorkspaceDiagnostics?(): Promise<Diagnostic[]>
+}
+
+/**
+ * Provides document outline (symbols) for a file.
+ */
+export interface OutlineProvider {
+  /**
+   * Gets the document symbols (outline) for a file.
+   *
+   * @param uri - The URI of the file
+   * @returns Array of document symbols representing the file's outline
+   */
+  provideDocumentSymbols(uri: UnifiedUri): Promise<DocumentSymbol[]>
 }
 
 // ============================================================================
 // Composite IDE Capabilities
 // ============================================================================
+
+/**
+ * Callback that gets invoked when diagnostics change.
+ * Used for MCP resource subscription support.
+ */
+export type OnDiagnosticsChangedCallback = (uri: UnifiedUri) => void
 
 /**
  * The complete set of capabilities that an IDE plugin can provide.
@@ -115,4 +143,16 @@ export interface IdeCapabilities {
 
   /** Optional: Provides diagnostics for files */
   diagnostics?: DiagnosticsProvider
+
+  /** Optional: Provides document outline (symbols) for files */
+  outline?: OutlineProvider
+
+  /**
+   * Optional: Called by the driver to register a callback for diagnostics changes.
+   * When this is provided, the diagnostics resources become subscribable.
+   * The plugin should call the registered callback whenever diagnostics change for a URI.
+   *
+   * @param callback - The callback to invoke when diagnostics change
+   */
+  onDiagnosticsChanged?: (callback: OnDiagnosticsChangedCallback) => void
 }

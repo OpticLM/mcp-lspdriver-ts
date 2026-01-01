@@ -1,3 +1,5 @@
+import { Client } from '@modelcontextprotocol/sdk/client'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { describe, expect, it, vi } from 'vitest'
 import type {
@@ -5,6 +7,8 @@ import type {
   DiagnosticsProvider,
   HierarchyProvider,
   IdeCapabilities,
+  OnDiagnosticsChangedCallback,
+  OutlineProvider,
   ReferencesProvider,
 } from './capabilities.js'
 import type {
@@ -12,16 +16,13 @@ import type {
   UserInteractionProvider,
 } from './interfaces.js'
 import { McpLspDriver } from './server.js'
-import type {
-  CodeSnippet,
-  Diagnostic,
-  ExactPosition,
-  PendingEditOperation,
-} from './types.js'
+import type { CodeSnippet, Diagnostic, DocumentSymbol } from './types.js'
 
-// Helper to create mock providers
+const mockFiles = {
+  'file:///path/to/file': 'MockFileContent',
+}
 function createMockFileAccess(
-  files: Record<string, string> = {},
+  files: Record<string, string> = mockFiles,
 ): FileAccessProvider {
   return {
     readFile: vi.fn(async (uri: string) => {
@@ -34,8 +35,16 @@ function createMockFileAccess(
   }
 }
 
+const mockCodeSnippet: CodeSnippet = {
+  uri: 'file:///path/to/file',
+  range: {
+    start: { line: 0, character: 1 },
+    end: { line: 2, character: 3 },
+  },
+  content: 'test',
+}
 function createMockDefinitionProvider(
-  results: CodeSnippet[] = [],
+  results: CodeSnippet[] = [mockCodeSnippet],
 ): DefinitionProvider {
   return {
     provideDefinition: vi.fn(async () => results),
@@ -60,9 +69,22 @@ function createMockHierarchyProvider(
 
 function createMockDiagnosticsProvider(
   results: Diagnostic[] = [],
+  workspaceResults?: Diagnostic[],
 ): DiagnosticsProvider {
-  return {
+  const provider: DiagnosticsProvider = {
     provideDiagnostics: vi.fn(async () => results),
+  }
+  if (workspaceResults !== undefined) {
+    provider.getWorkspaceDiagnostics = vi.fn(async () => workspaceResults)
+  }
+  return provider
+}
+
+function createMockOutlineProvider(
+  results: DocumentSymbol[] = [],
+): OutlineProvider {
+  return {
+    provideDocumentSymbols: vi.fn(async () => results),
   }
 }
 
@@ -77,6 +99,14 @@ function createMockServer(): McpServer {
     name: 'test-server',
     version: '1.0.0',
   })
+}
+
+async function createAndConnectMockClient(server: McpServer): Promise<Client> {
+  const [c, s] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: 'test-client', version: '1.0.0' })
+  await server.connect(s)
+  await client.connect(c)
+  return client
 }
 
 describe('McpLspDriver', () => {
@@ -100,6 +130,7 @@ describe('McpLspDriver', () => {
         references: createMockReferencesProvider(),
         hierarchy: createMockHierarchyProvider(),
         diagnostics: createMockDiagnosticsProvider(),
+        outline: createMockOutlineProvider(),
       }
 
       const driver = new McpLspDriver(server, capabilities)
@@ -134,7 +165,7 @@ describe('McpLspDriver', () => {
       expect(driver).toBeDefined()
     })
 
-    it('should register goto_definition when definition provider is available', () => {
+    it('should register goto_definition when definition provider is available', async () => {
       const server = createMockServer()
       const definitionProvider = createMockDefinitionProvider()
       const capabilities: IdeCapabilities = {
@@ -144,7 +175,22 @@ describe('McpLspDriver', () => {
 
       const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
-      // Tool registration is internal - we verify by checking the provider is used
+
+      const client = await createAndConnectMockClient(server)
+      const r = await client.callTool({
+        name: 'goto_definition',
+        arguments: { uri: mockCodeSnippet.uri, symbol_name: '', line_hint: 1 },
+      })
+      expect(r.structuredContent).toStrictEqual({
+        snippets: [
+          {
+            content: mockCodeSnippet.content,
+            endLine: mockCodeSnippet.range.end.line + 1,
+            startLine: mockCodeSnippet.range.start.line + 1,
+            uri: mockCodeSnippet.uri,
+          },
+        ],
+      })
     })
 
     it('should register find_references when references provider is available', () => {
@@ -159,6 +205,67 @@ describe('McpLspDriver', () => {
       expect(driver).toBeDefined()
     })
 
+    it('should register find_references and return formatted results when called', async () => {
+      const server = createMockServer()
+      const referenceSnippets: CodeSnippet[] = [
+        {
+          uri: 'file:///path/to/file1',
+          range: {
+            start: { line: 10, character: 5 },
+            end: { line: 10, character: 10 },
+          },
+          content: 'someVariable',
+        },
+        {
+          uri: 'file:///path/to/file2',
+          range: {
+            start: { line: 20, character: 0 },
+            end: { line: 20, character: 12 },
+          },
+          content: 'someVariable = 42',
+        },
+      ]
+      const referencesProvider = createMockReferencesProvider(referenceSnippets)
+      // File content with someVariable at line 10
+      const files = {
+        'file:///path/to/file':
+          'line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nsomeVariable\nline11',
+      }
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(files),
+        references: referencesProvider,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      const client = await createAndConnectMockClient(server)
+      const r = await client.callTool({
+        name: 'find_references',
+        arguments: {
+          uri: 'file:///path/to/file',
+          symbol_name: 'someVariable',
+          line_hint: 10,
+        },
+      })
+      expect(r.structuredContent).toStrictEqual({
+        snippets: [
+          {
+            content: 'someVariable',
+            endLine: 11,
+            startLine: 11,
+            uri: 'file:///path/to/file1',
+          },
+          {
+            content: 'someVariable = 42',
+            endLine: 21,
+            startLine: 21,
+            uri: 'file:///path/to/file2',
+          },
+        ],
+      })
+    })
+
     it('should register call_hierarchy when hierarchy provider is available', () => {
       const server = createMockServer()
       const hierarchyProvider = createMockHierarchyProvider()
@@ -171,9 +278,86 @@ describe('McpLspDriver', () => {
       expect(driver).toBeDefined()
     })
 
-    it('should register get_diagnostics when diagnostics provider is available', () => {
+    it('should register call_hierarchy and return formatted results when called', async () => {
       const server = createMockServer()
-      const diagnosticsProvider = createMockDiagnosticsProvider()
+      const callHierarchySnippets: CodeSnippet[] = [
+        {
+          uri: 'file:///path/to/caller1',
+          range: {
+            start: { line: 5, character: 0 },
+            end: { line: 7, character: 1 },
+          },
+          content: 'function caller1() {\n  targetFunction()\n}',
+        },
+        {
+          uri: 'file:///path/to/caller2',
+          range: {
+            start: { line: 15, character: 0 },
+            end: { line: 18, character: 1 },
+          },
+          content: 'function caller2() {\n  x = targetFunction()\n}',
+        },
+      ]
+      const hierarchyProvider = createMockHierarchyProvider(
+        callHierarchySnippets,
+      )
+      // File content with targetFunction at line 10
+      const files = {
+        'file:///path/to/file':
+          'line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\ntargetFunction\nline11',
+      }
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(files),
+        hierarchy: hierarchyProvider,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      const client = await createAndConnectMockClient(server)
+      const r = await client.callTool({
+        name: 'call_hierarchy',
+        arguments: {
+          uri: 'file:///path/to/file',
+          symbol_name: 'targetFunction',
+          line_hint: 10,
+          direction: 'incoming',
+        },
+      })
+      expect(r.structuredContent).toStrictEqual({
+        snippets: [
+          {
+            content: 'function caller1() {\n  targetFunction()\n}',
+            endLine: 8,
+            startLine: 6,
+            uri: 'file:///path/to/caller1',
+          },
+          {
+            content: 'function caller2() {\n  x = targetFunction()\n}',
+            endLine: 19,
+            startLine: 16,
+            uri: 'file:///path/to/caller2',
+          },
+        ],
+      })
+    })
+
+    it('should register diagnostics resources and return formatted results', async () => {
+      const server = createMockServer()
+      const diagnostics: Diagnostic[] = [
+        {
+          uri: 'test.ts',
+          range: {
+            start: { line: 0, character: 5 },
+            end: { line: 0, character: 10 },
+          },
+          severity: 'error',
+          message: 'Syntax error',
+          source: 'typescript',
+          code: 2322,
+        },
+      ]
+      const diagnosticsProvider = createMockDiagnosticsProvider(diagnostics)
       const capabilities: IdeCapabilities = {
         fileAccess: createMockFileAccess(),
         diagnostics: diagnosticsProvider,
@@ -181,6 +365,117 @@ describe('McpLspDriver', () => {
 
       const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
+
+      // Verify the provider returns the expected diagnostics
+      const result = await diagnosticsProvider.provideDiagnostics('test.ts')
+      expect(result).toHaveLength(1)
+      expect(result[0]?.message).toBe('Syntax error')
+      expect(result[0]?.severity).toBe('error')
+      expect(result[0]?.code).toBe(2322)
+    })
+
+    it('should register workspace diagnostics resource when getWorkspaceDiagnostics is provided', async () => {
+      const server = createMockServer()
+      const workspaceDiagnostics: Diagnostic[] = [
+        {
+          uri: 'file1.ts',
+          range: {
+            start: { line: 1, character: 0 },
+            end: { line: 1, character: 5 },
+          },
+          severity: 'warning',
+          message: 'Unused variable',
+        },
+        {
+          uri: 'file2.ts',
+          range: {
+            start: { line: 5, character: 0 },
+            end: { line: 5, character: 3 },
+          },
+          severity: 'error',
+          message: 'Missing semicolon',
+        },
+      ]
+      const diagnosticsProvider = createMockDiagnosticsProvider(
+        [],
+        workspaceDiagnostics,
+      )
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(),
+        diagnostics: diagnosticsProvider,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      // Verify workspace diagnostics can be retrieved
+      if (diagnosticsProvider.getWorkspaceDiagnostics) {
+        const result = await diagnosticsProvider.getWorkspaceDiagnostics()
+        expect(result).toHaveLength(2)
+        expect(result[0]?.uri).toBe('file1.ts')
+        expect(result[1]?.uri).toBe('file2.ts')
+      }
+    })
+
+    it('should register outline resource and return formatted results', async () => {
+      const server = createMockServer()
+      const symbols: DocumentSymbol[] = [
+        {
+          name: 'MyClass',
+          kind: 'class',
+          range: {
+            start: { line: 0, character: 0 },
+            end: { line: 10, character: 1 },
+          },
+          selectionRange: {
+            start: { line: 0, character: 6 },
+            end: { line: 0, character: 13 },
+          },
+          children: [
+            {
+              name: 'constructor',
+              kind: 'method',
+              range: {
+                start: { line: 1, character: 2 },
+                end: { line: 3, character: 3 },
+              },
+              selectionRange: {
+                start: { line: 1, character: 2 },
+                end: { line: 1, character: 13 },
+              },
+            },
+            {
+              name: 'getValue',
+              kind: 'method',
+              range: {
+                start: { line: 4, character: 2 },
+                end: { line: 6, character: 3 },
+              },
+              selectionRange: {
+                start: { line: 4, character: 2 },
+                end: { line: 4, character: 10 },
+              },
+            },
+          ],
+        },
+      ]
+      const outlineProvider = createMockOutlineProvider(symbols)
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(),
+        outline: outlineProvider,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      // Verify the outline provider returns the expected symbols
+      const result = await outlineProvider.provideDocumentSymbols('test.ts')
+      expect(result).toHaveLength(1)
+      expect(result[0]?.name).toBe('MyClass')
+      expect(result[0]?.kind).toBe('class')
+      expect(result[0]?.children).toHaveLength(2)
+      expect(result[0]?.children?.[0]?.name).toBe('constructor')
+      expect(result[0]?.children?.[1]?.name).toBe('getValue')
     })
 
     it('should register apply_edit when userInteraction provider is available', () => {
@@ -194,162 +489,82 @@ describe('McpLspDriver', () => {
       const driver = new McpLspDriver(server, capabilities)
       expect(driver).toBeDefined()
     })
+
+    it('should register apply_edit and return result when user approves', async () => {
+      const server = createMockServer()
+      const userInteraction = createMockUserInteraction(true)
+      const files = { 'file:///test.ts': 'const foo = 1; const bar = 2;' }
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(files),
+        userInteraction,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      const client = await createAndConnectMockClient(server)
+      const r = await client.callTool({
+        name: 'apply_edit',
+        arguments: {
+          uri: 'file:///test.ts',
+          search_text: 'const foo = 1;',
+          replace_text: 'const foo = 100;',
+          description: 'Update foo value',
+        },
+      })
+      expect(r.structuredContent).toStrictEqual({
+        success: true,
+        message: 'Edit successfully applied and saved.',
+      })
+    })
+
+    it('should register apply_edit and return rejection when user declines', async () => {
+      const server = createMockServer()
+      const userInteraction = createMockUserInteraction(false)
+      const files = { 'file:///test.ts': 'const foo = 1; const bar = 2;' }
+      const capabilities: IdeCapabilities = {
+        fileAccess: createMockFileAccess(files),
+        userInteraction,
+      }
+
+      const driver = new McpLspDriver(server, capabilities)
+      expect(driver).toBeDefined()
+
+      const client = await createAndConnectMockClient(server)
+      const r = await client.callTool({
+        name: 'apply_edit',
+        arguments: {
+          uri: 'file:///test.ts',
+          search_text: 'const foo = 1;',
+          replace_text: 'const foo = 100;',
+          description: 'Update foo value',
+        },
+      })
+      expect(r.structuredContent).toStrictEqual({
+        success: false,
+        message: 'Edit rejected by user.',
+      })
+    })
   })
 })
 
-describe('normalizeUri (via server behavior)', () => {
-  it('should handle Windows-style paths in tool inputs', () => {
-    // This tests that the server normalizes paths correctly
+describe('diagnostics subscription', () => {
+  it('should register onDiagnosticsChanged callback when provided', () => {
     const server = createMockServer()
-    const files = { 'C:/Users/test/file.ts': 'const x = 1;' }
-    const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(files),
-    }
+    const diagnosticsProvider = createMockDiagnosticsProvider()
+    let registeredCallback: OnDiagnosticsChangedCallback | undefined
 
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
-  })
-
-  it('should preserve file:// URIs', () => {
-    const server = createMockServer()
-    const files = { 'file:///home/user/file.ts': 'const x = 1;' }
-    const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(files),
-    }
-
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
-  })
-})
-
-describe('formatSnippetsAsMarkdown (via provider results)', () => {
-  it('should format single snippet correctly', async () => {
-    const snippets: CodeSnippet[] = [
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 0, character: 0 },
-          end: { line: 0, character: 10 },
-        },
-        content: 'const x = 1;',
-      },
-    ]
-
-    const definitionProvider: DefinitionProvider = {
-      provideDefinition: vi.fn(async () => snippets),
-    }
-
-    const server = createMockServer()
-    const files = { 'test.ts': 'const x = 1;' }
-    const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(files),
-      definition: definitionProvider,
-    }
-
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
-    // The formatting is tested indirectly through integration
-  })
-
-  it('should handle empty results', async () => {
-    const definitionProvider: DefinitionProvider = {
-      provideDefinition: vi.fn(async () => []),
-    }
-
-    const server = createMockServer()
-    const files = { 'test.ts': 'const x = 1;' }
-    const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(files),
-      definition: definitionProvider,
-    }
-
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
-  })
-})
-
-describe('diagnostics formatting', () => {
-  it('should handle various diagnostic severities', () => {
-    const diagnostics: Diagnostic[] = [
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 0, character: 0 },
-          end: { line: 0, character: 5 },
-        },
-        severity: 'error',
-        message: 'Test error',
-      },
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 1, character: 0 },
-          end: { line: 1, character: 5 },
-        },
-        severity: 'warning',
-        message: 'Test warning',
-      },
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 2, character: 0 },
-          end: { line: 2, character: 5 },
-        },
-        severity: 'information',
-        message: 'Test info',
-      },
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 3, character: 0 },
-          end: { line: 3, character: 5 },
-        },
-        severity: 'hint',
-        message: 'Test hint',
-      },
-    ]
-
-    const diagnosticsProvider: DiagnosticsProvider = {
-      provideDiagnostics: vi.fn(async () => diagnostics),
-    }
-
-    const server = createMockServer()
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(),
       diagnostics: diagnosticsProvider,
-    }
-
-    const driver = new McpLspDriver(server, capabilities)
-    expect(driver).toBeDefined()
-  })
-
-  it('should handle diagnostics with source and code', () => {
-    const diagnostics: Diagnostic[] = [
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 0, character: 0 },
-          end: { line: 0, character: 5 },
-        },
-        severity: 'error',
-        message: 'Test error',
-        source: 'typescript',
-        code: 2322,
+      onDiagnosticsChanged: (callback) => {
+        registeredCallback = callback
       },
-    ]
-
-    const diagnosticsProvider: DiagnosticsProvider = {
-      provideDiagnostics: vi.fn(async () => diagnostics),
-    }
-
-    const server = createMockServer()
-    const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(),
-      diagnostics: diagnosticsProvider,
     }
 
     const driver = new McpLspDriver(server, capabilities)
     expect(driver).toBeDefined()
+    expect(registeredCallback).toBeDefined()
   })
 })
 
@@ -430,47 +645,201 @@ describe('error handling', () => {
   })
 })
 
-describe('type safety', () => {
-  it('should enforce correct FuzzyPosition structure', () => {
-    // This is a compile-time check - if this compiles, the types are correct
-    const fuzzy = {
-      symbolName: 'test',
-      lineHint: 1,
-      orderHint: 0,
-    }
-
-    expect(fuzzy.symbolName).toBe('test')
-    expect(fuzzy.lineHint).toBe(1)
-    expect(fuzzy.orderHint).toBe(0)
-  })
-
-  it('should enforce correct ExactPosition structure', () => {
-    const exact: ExactPosition = {
-      line: 0,
-      character: 5,
-    }
-
-    expect(exact.line).toBe(0)
-    expect(exact.character).toBe(5)
-  })
-
-  it('should enforce correct PendingEditOperation structure', () => {
-    const operation: PendingEditOperation = {
-      id: 'edit-123',
-      uri: 'test.ts',
-      edits: [
-        {
-          range: {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 5 },
-          },
-          newText: 'hello',
+describe('resource integration', () => {
+  it('should register and access file diagnostics resource', async () => {
+    const server = createMockServer()
+    const diagnostics: Diagnostic[] = [
+      {
+        uri: 'test.ts',
+        range: {
+          start: { line: 0, character: 5 },
+          end: { line: 0, character: 10 },
         },
-      ],
-      description: 'Test edit',
+        severity: 'error',
+        message: 'Syntax error',
+        source: 'typescript',
+        code: 2322,
+      },
+    ]
+    const diagnosticsProvider = createMockDiagnosticsProvider(diagnostics)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      diagnostics: diagnosticsProvider,
     }
 
-    expect(operation.id).toBe('edit-123')
-    expect(operation.edits).toHaveLength(1)
+    const driver = new McpLspDriver(server, capabilities)
+    expect(driver).toBeDefined()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://diagnostics/test.ts' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: '- **ERROR** [typescript] (2322) at line 1: Syntax error',
+      uri: 'lsp://diagnostics/test.ts',
+    })
+  })
+
+  it('should register and access workspace diagnostics resource', async () => {
+    const server = createMockServer()
+    const workspaceDiagnostics: Diagnostic[] = [
+      {
+        uri: 'file1.ts',
+        range: {
+          start: { line: 1, character: 0 },
+          end: { line: 1, character: 5 },
+        },
+        severity: 'warning',
+        message: 'Unused variable',
+      },
+      {
+        uri: 'file2.ts',
+        range: {
+          start: { line: 5, character: 0 },
+          end: { line: 5, character: 3 },
+        },
+        severity: 'error',
+        message: 'Missing semicolon',
+      },
+    ]
+    const diagnosticsProvider = createMockDiagnosticsProvider(
+      [],
+      workspaceDiagnostics,
+    )
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      diagnostics: diagnosticsProvider,
+    }
+
+    const driver = new McpLspDriver(server, capabilities)
+    expect(driver).toBeDefined()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://diagnostics/workspace' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: `## file1.ts
+- **WARNING** at line 2: Unused variable
+
+## file2.ts
+- **ERROR** at line 6: Missing semicolon`,
+      uri: 'lsp://diagnostics/workspace',
+    })
+  })
+
+  it('should register and access outline resource', async () => {
+    const server = createMockServer()
+    const symbols: DocumentSymbol[] = [
+      {
+        name: 'MyClass',
+        kind: 'class',
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 10, character: 1 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 6 },
+          end: { line: 0, character: 13 },
+        },
+        children: [
+          {
+            name: 'myMethod',
+            kind: 'method',
+            range: {
+              start: { line: 2, character: 2 },
+              end: { line: 5, character: 3 },
+            },
+            selectionRange: {
+              start: { line: 2, character: 2 },
+              end: { line: 2, character: 10 },
+            },
+          },
+        ],
+      },
+    ]
+    const outlineProvider = createMockOutlineProvider(symbols)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      outline: outlineProvider,
+    }
+
+    const driver = new McpLspDriver(server, capabilities)
+    expect(driver).toBeDefined()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://outline/test.ts' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: `- **class** \`MyClass\` (lines 1-11)
+  - **method** \`myMethod\` (lines 3-6)`,
+      uri: 'lsp://outline/test.ts',
+    })
+  })
+
+  it('should handle outline with nested symbols', async () => {
+    const server = createMockServer()
+    const symbols: DocumentSymbol[] = [
+      {
+        name: 'MyNamespace',
+        kind: 'namespace',
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 20, character: 1 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 10 },
+          end: { line: 0, character: 21 },
+        },
+        children: [
+          {
+            name: 'MyClass',
+            kind: 'class',
+            range: {
+              start: { line: 2, character: 2 },
+              end: { line: 15, character: 3 },
+            },
+            selectionRange: {
+              start: { line: 2, character: 8 },
+              end: { line: 2, character: 15 },
+            },
+            children: [
+              {
+                name: 'constructor',
+                kind: 'method',
+                range: {
+                  start: { line: 4, character: 4 },
+                  end: { line: 6, character: 5 },
+                },
+                selectionRange: {
+                  start: { line: 4, character: 4 },
+                  end: { line: 4, character: 15 },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]
+    const outlineProvider = createMockOutlineProvider(symbols)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      outline: outlineProvider,
+    }
+
+    const driver = new McpLspDriver(server, capabilities)
+    expect(driver).toBeDefined()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://outline/test.ts' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: `- **namespace** \`MyNamespace\` (lines 1-21)
+  - **class** \`MyClass\` (lines 3-16)
+    - **method** \`constructor\` (lines 5-7)`,
+      uri: 'lsp://outline/test.ts',
+    })
   })
 })

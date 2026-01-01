@@ -5,123 +5,34 @@
  * are defined in the IdeCapabilities configuration.
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import {
+  type McpServer,
+  ResourceTemplate,
+} from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import type { IdeCapabilities } from './capabilities.js'
+import {
+  formatDiagnosticsAsMarkdown,
+  formatSnippetsAsMarkdown,
+  formatSymbolsAsMarkdown,
+  generateEditId,
+  normalizeUri,
+} from './formatting.js'
 import {
   type ResolverConfig,
   SymbolResolutionError,
   SymbolResolver,
 } from './resolver.js'
+import {
+  ApplyEditSchema,
+  CallHierarchySchema,
+  FuzzyPositionSchema,
+} from './schemas.js'
 import type {
-  CodeSnippet,
   EditResult,
   FuzzyPosition,
   PendingEditOperation,
 } from './types.js'
-
-// ============================================================================
-// Zod Schemas for Tool Inputs
-// ============================================================================
-
-const FuzzyPositionSchema = z.object({
-  uri: z.string().describe('The file URI or path'),
-  symbol_name: z.string().describe('The text of the symbol to find'),
-  line_hint: z
-    .number()
-    .int()
-    .positive()
-    .describe('Approximate 1-based line number where the symbol is expected'),
-  order_hint: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .default(0)
-    .describe(
-      '0-based index of which occurrence to target if symbol appears multiple times',
-    ),
-})
-
-const ApplyEditSchema = z.object({
-  uri: z.string().describe('The file URI or path'),
-  search_text: z
-    .string()
-    .describe('Exact text to replace (must exist uniquely in the file)'),
-  replace_text: z.string().describe('New text to insert'),
-  description: z.string().describe('Rationale for the edit'),
-})
-
-const DiagnosticsSchema = z.object({
-  uri: z.string().describe('The file URI or path to get diagnostics for'),
-})
-
-const CallHierarchySchema = z.object({
-  uri: z.string().describe('The file URI or path'),
-  symbol_name: z.string().describe('The text of the symbol to find'),
-  line_hint: z
-    .number()
-    .int()
-    .positive()
-    .describe('Approximate 1-based line number where the symbol is expected'),
-  order_hint: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .default(0)
-    .describe(
-      '0-based index of which occurrence to target if symbol appears multiple times',
-    ),
-  direction: z
-    .enum(['incoming', 'outgoing'])
-    .describe('Direction of the call hierarchy'),
-})
-
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-/**
- * Normalizes a URI to handle Windows/Unix path separator differences.
- */
-function normalizeUri(uri: string): string {
-  // If it's already a file:// URI, leave it alone
-  if (uri.startsWith('file://')) {
-    return uri
-  }
-  // Normalize backslashes to forward slashes for consistency
-  return uri.replace(/\\/g, '/')
-}
-
-/**
- * Formats code snippets as markdown for LLM consumption.
- */
-function formatSnippetsAsMarkdown(snippets: CodeSnippet[]): string {
-  if (snippets.length === 0) {
-    return 'No results found.'
-  }
-
-  return snippets
-    .map((snippet) => {
-      const startLine = snippet.range.start.line + 1 // Convert to 1-based
-      const endLine = snippet.range.end.line + 1
-      const locationInfo =
-        startLine === endLine
-          ? `Line ${startLine}`
-          : `Lines ${startLine}-${endLine}`
-
-      return `### ${snippet.uri}\n${locationInfo}\n\`\`\`\n${snippet.content}\n\`\`\``
-    })
-    .join('\n\n')
-}
-
-/**
- * Generates a unique ID for pending edit operations.
- */
-function generateEditId(): string {
-  return `edit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-}
 
 // ============================================================================
 // McpLspDriver Class
@@ -168,6 +79,7 @@ export class McpLspDriver {
     )
 
     this.registerTools()
+    this.registerResources()
   }
 
   /**
@@ -189,14 +101,24 @@ export class McpLspDriver {
       this.registerCallHierarchyTool()
     }
 
-    // Register get_diagnostics if diagnostics provider exists
-    if (this.capabilities.diagnostics) {
-      this.registerDiagnosticsTool()
-    }
-
     // Register apply_edit if user interaction provider exists
     if (this.capabilities.userInteraction) {
       this.registerApplyEditTool()
+    }
+  }
+
+  /**
+   * Registers all available resources based on the provided capabilities.
+   */
+  private registerResources(): void {
+    // Register diagnostics resources if diagnostics provider exists
+    if (this.capabilities.diagnostics) {
+      this.registerDiagnosticsResources()
+    }
+
+    // Register outline resource if outline provider exists
+    if (this.capabilities.outline) {
+      this.registerOutlineResource()
     }
   }
 
@@ -207,14 +129,27 @@ export class McpLspDriver {
     const definitionProvider = this.capabilities.definition
     if (!definitionProvider) return
 
-    this.server.tool(
+    this.server.registerTool(
       'goto_definition',
-      'Navigate to the definition of a symbol. Resolves fuzzy position to exact coordinates.',
       {
-        uri: FuzzyPositionSchema.shape.uri,
-        symbol_name: FuzzyPositionSchema.shape.symbol_name,
-        line_hint: FuzzyPositionSchema.shape.line_hint,
-        order_hint: FuzzyPositionSchema.shape.order_hint,
+        description:
+          'Navigate to the definition of a symbol. Resolves fuzzy position to exact coordinates.',
+        inputSchema: {
+          uri: FuzzyPositionSchema.shape.uri,
+          symbol_name: FuzzyPositionSchema.shape.symbol_name,
+          line_hint: FuzzyPositionSchema.shape.line_hint,
+          order_hint: FuzzyPositionSchema.shape.order_hint,
+        },
+        outputSchema: {
+          snippets: z.array(
+            z.object({
+              uri: z.string(),
+              startLine: z.number(),
+              endLine: z.number(),
+              content: z.string(),
+            }),
+          ),
+        },
       },
       async (params) => {
         try {
@@ -232,8 +167,18 @@ export class McpLspDriver {
           )
           const markdown = formatSnippetsAsMarkdown(snippets)
 
+          const structuredSnippets = snippets.map((snippet) => ({
+            uri: snippet.uri,
+            startLine: snippet.range.start.line + 1,
+            endLine: snippet.range.end.line + 1,
+            content: snippet.content,
+          }))
+
           return {
             content: [{ type: 'text' as const, text: markdown }],
+            structuredContent: {
+              snippets: structuredSnippets,
+            },
           }
         } catch (error) {
           const message =
@@ -242,6 +187,7 @@ export class McpLspDriver {
               : `Error: ${error instanceof Error ? error.message : String(error)}`
           return {
             content: [{ type: 'text' as const, text: message }],
+            structuredContent: { error: message },
             isError: true,
           }
         }
@@ -256,14 +202,27 @@ export class McpLspDriver {
     const referencesProvider = this.capabilities.references
     if (!referencesProvider) return
 
-    this.server.tool(
+    this.server.registerTool(
       'find_references',
-      'Find all references to a symbol. Returns a list of locations where the symbol is used.',
       {
-        uri: FuzzyPositionSchema.shape.uri,
-        symbol_name: FuzzyPositionSchema.shape.symbol_name,
-        line_hint: FuzzyPositionSchema.shape.line_hint,
-        order_hint: FuzzyPositionSchema.shape.order_hint,
+        description:
+          'Find all references to a symbol. Returns a list of locations where the symbol is used.',
+        inputSchema: {
+          uri: FuzzyPositionSchema.shape.uri,
+          symbol_name: FuzzyPositionSchema.shape.symbol_name,
+          line_hint: FuzzyPositionSchema.shape.line_hint,
+          order_hint: FuzzyPositionSchema.shape.order_hint,
+        },
+        outputSchema: {
+          snippets: z.array(
+            z.object({
+              uri: z.string(),
+              startLine: z.number(),
+              endLine: z.number(),
+              content: z.string(),
+            }),
+          ),
+        },
       },
       async (params) => {
         try {
@@ -281,8 +240,18 @@ export class McpLspDriver {
           )
           const markdown = formatSnippetsAsMarkdown(snippets)
 
+          const structuredSnippets = snippets.map((snippet) => ({
+            uri: snippet.uri,
+            startLine: snippet.range.start.line + 1,
+            endLine: snippet.range.end.line + 1,
+            content: snippet.content,
+          }))
+
           return {
             content: [{ type: 'text' as const, text: markdown }],
+            structuredContent: {
+              snippets: structuredSnippets,
+            },
           }
         } catch (error) {
           const message =
@@ -291,6 +260,7 @@ export class McpLspDriver {
               : `Error: ${error instanceof Error ? error.message : String(error)}`
           return {
             content: [{ type: 'text' as const, text: message }],
+            structuredContent: { error: message },
             isError: true,
           }
         }
@@ -305,15 +275,28 @@ export class McpLspDriver {
     const hierarchyProvider = this.capabilities.hierarchy
     if (!hierarchyProvider) return
 
-    this.server.tool(
+    this.server.registerTool(
       'call_hierarchy',
-      'Get call hierarchy for a function or method. Shows incoming (callers) or outgoing (callees) calls.',
       {
-        uri: CallHierarchySchema.shape.uri,
-        symbol_name: CallHierarchySchema.shape.symbol_name,
-        line_hint: CallHierarchySchema.shape.line_hint,
-        order_hint: CallHierarchySchema.shape.order_hint,
-        direction: CallHierarchySchema.shape.direction,
+        description:
+          'Get call hierarchy for a function or method. Shows incoming (callers) or outgoing (callees) calls.',
+        inputSchema: {
+          uri: CallHierarchySchema.shape.uri,
+          symbol_name: CallHierarchySchema.shape.symbol_name,
+          line_hint: CallHierarchySchema.shape.line_hint,
+          order_hint: CallHierarchySchema.shape.order_hint,
+          direction: CallHierarchySchema.shape.direction,
+        },
+        outputSchema: {
+          snippets: z.array(
+            z.object({
+              uri: z.string(),
+              startLine: z.number(),
+              endLine: z.number(),
+              content: z.string(),
+            }),
+          ),
+        },
       },
       async (params) => {
         try {
@@ -332,8 +315,18 @@ export class McpLspDriver {
           )
           const markdown = formatSnippetsAsMarkdown(snippets)
 
+          const structuredSnippets = snippets.map((snippet) => ({
+            uri: snippet.uri,
+            startLine: snippet.range.start.line + 1,
+            endLine: snippet.range.end.line + 1,
+            content: snippet.content,
+          }))
+
           return {
             content: [{ type: 'text' as const, text: markdown }],
+            structuredContent: {
+              snippets: structuredSnippets,
+            },
           }
         } catch (error) {
           const message =
@@ -342,6 +335,7 @@ export class McpLspDriver {
               : `Error: ${error instanceof Error ? error.message : String(error)}`
           return {
             content: [{ type: 'text' as const, text: message }],
+            structuredContent: { error: message },
             isError: true,
           }
         }
@@ -350,49 +344,197 @@ export class McpLspDriver {
   }
 
   /**
-   * Registers the get_diagnostics tool.
+   * Registers diagnostics resources.
+   * - lsp://diagnostics/{path} - diagnostics for a specific file
+   * - lsp://diagnostics/workspace - diagnostics for the entire workspace (if getWorkspaceDiagnostics is provided)
    */
-  private registerDiagnosticsTool(): void {
+  private registerDiagnosticsResources(): void {
     const diagnosticsProvider = this.capabilities.diagnostics
     if (!diagnosticsProvider) return
 
-    this.server.tool(
-      'get_diagnostics',
-      'Get diagnostics (errors, warnings, hints) for a file.',
+    // Register file diagnostics resource template
+    const fileDiagnosticsTemplate = new ResourceTemplate(
+      'lsp://diagnostics/{+path}',
       {
-        uri: DiagnosticsSchema.shape.uri,
+        list: undefined, // Cannot enumerate all files with diagnostics
       },
-      async (params) => {
+    )
+
+    this.server.registerResource(
+      'file-diagnostics',
+      fileDiagnosticsTemplate,
+      {
+        description:
+          'Diagnostics (errors, warnings, hints) for a specific file. Use the file path after lsp://diagnostics/',
+        mimeType: 'text/markdown',
+      },
+      async (_uri, variables) => {
         try {
-          const uri = normalizeUri(params.uri)
-          const diagnostics = await diagnosticsProvider.provideDiagnostics(uri)
-
-          if (diagnostics.length === 0) {
-            return {
-              content: [
-                { type: 'text' as const, text: 'No diagnostics found.' },
-              ],
-            }
-          }
-
-          const markdown = diagnostics
-            .map((d) => {
-              const line = d.range.start.line + 1
-              const severity = d.severity.toUpperCase()
-              const source = d.source ? ` [${d.source}]` : ''
-              const code = d.code !== undefined ? ` (${d.code})` : ''
-              return `- **${severity}**${source}${code} at line ${line}: ${d.message}`
-            })
-            .join('\n')
+          const path = variables.path as string
+          const normalizedPath = normalizeUri(path)
+          const diagnostics =
+            await diagnosticsProvider.provideDiagnostics(normalizedPath)
+          const markdown = formatDiagnosticsAsMarkdown(diagnostics)
 
           return {
-            content: [{ type: 'text' as const, text: markdown }],
+            contents: [
+              {
+                uri: `lsp://diagnostics/${path}`,
+                mimeType: 'text/markdown',
+                text: markdown,
+              },
+            ],
           }
         } catch (error) {
           const message = `Error: ${error instanceof Error ? error.message : String(error)}`
           return {
-            content: [{ type: 'text' as const, text: message }],
-            isError: true,
+            contents: [
+              {
+                uri: `lsp://diagnostics/${variables.path}`,
+                mimeType: 'text/markdown',
+                text: message,
+              },
+            ],
+          }
+        }
+      },
+    )
+
+    // Register workspace diagnostics resource if getWorkspaceDiagnostics is provided
+    if (diagnosticsProvider.getWorkspaceDiagnostics) {
+      const getWorkspaceDiagnostics =
+        diagnosticsProvider.getWorkspaceDiagnostics.bind(diagnosticsProvider)
+
+      this.server.registerResource(
+        'workspace-diagnostics',
+        'lsp://diagnostics/workspace',
+        {
+          description:
+            'All diagnostics (errors, warnings, hints) across the entire workspace',
+          mimeType: 'text/markdown',
+        },
+        async () => {
+          try {
+            const diagnostics = await getWorkspaceDiagnostics()
+
+            // Group diagnostics by file
+            const groupedByFile = new Map<string, typeof diagnostics>()
+            for (const d of diagnostics) {
+              const existing = groupedByFile.get(d.uri) ?? []
+              existing.push(d)
+              groupedByFile.set(d.uri, existing)
+            }
+
+            if (groupedByFile.size === 0) {
+              return {
+                contents: [
+                  {
+                    uri: 'lsp://diagnostics/workspace',
+                    mimeType: 'text/markdown',
+                    text: 'No diagnostics found in workspace.',
+                  },
+                ],
+              }
+            }
+
+            // Format grouped diagnostics
+            const sections: string[] = []
+            for (const [uri, fileDiagnostics] of groupedByFile) {
+              sections.push(
+                `## ${uri}\n${formatDiagnosticsAsMarkdown(fileDiagnostics)}`,
+              )
+            }
+
+            return {
+              contents: [
+                {
+                  uri: 'lsp://diagnostics/workspace',
+                  mimeType: 'text/markdown',
+                  text: sections.join('\n\n'),
+                },
+              ],
+            }
+          } catch (error) {
+            const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+            return {
+              contents: [
+                {
+                  uri: 'lsp://diagnostics/workspace',
+                  mimeType: 'text/markdown',
+                  text: message,
+                },
+              ],
+            }
+          }
+        },
+      )
+    }
+
+    // Set up subscription support if onDiagnosticsChanged is provided
+    if (this.capabilities.onDiagnosticsChanged) {
+      this.capabilities.onDiagnosticsChanged((uri) => {
+        // Notify MCP clients that the diagnostics resource has been updated
+        const normalizedUri = normalizeUri(uri)
+        this.server.server.sendResourceUpdated({
+          uri: `lsp://diagnostics/${normalizedUri}`,
+        })
+        // Also notify workspace diagnostics if it exists
+        if (diagnosticsProvider.getWorkspaceDiagnostics) {
+          this.server.server.sendResourceUpdated({
+            uri: 'lsp://diagnostics/workspace',
+          })
+        }
+      })
+    }
+  }
+
+  /**
+   * Registers the outline resource.
+   * - lsp://outline/{path} - document symbols (outline) for a specific file
+   */
+  private registerOutlineResource(): void {
+    const outlineProvider = this.capabilities.outline
+    if (!outlineProvider) return
+
+    const outlineTemplate = new ResourceTemplate('lsp://outline/{+path}', {
+      list: undefined, // Cannot enumerate all files
+    })
+
+    this.server.registerResource(
+      'file-outline',
+      outlineTemplate,
+      {
+        description:
+          'Document outline (symbols like classes, functions, variables) for a specific file. Use the file path after lsp://outline/',
+        mimeType: 'text/markdown',
+      },
+      async (_uri, variables) => {
+        try {
+          const path = variables.path as string
+          const normalizedPath = normalizeUri(path)
+          const symbols =
+            await outlineProvider.provideDocumentSymbols(normalizedPath)
+          const markdown = formatSymbolsAsMarkdown(symbols)
+
+          return {
+            contents: [
+              {
+                uri: `lsp://outline/${path}`,
+                mimeType: 'text/markdown',
+                text: markdown,
+              },
+            ],
+          }
+        } catch (error) {
+          const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+          return {
+            contents: [
+              {
+                uri: `lsp://outline/${variables.path}`,
+                mimeType: 'text/markdown',
+                text: message,
+              },
+            ],
           }
         }
       },
@@ -406,14 +548,22 @@ export class McpLspDriver {
     const userInteraction = this.capabilities.userInteraction
     if (!userInteraction) return
 
-    this.server.tool(
+    this.server.registerTool(
       'apply_edit',
-      'Apply a text edit to a file. The edit must be approved by the user before being applied.',
       {
-        uri: ApplyEditSchema.shape.uri,
-        search_text: ApplyEditSchema.shape.search_text,
-        replace_text: ApplyEditSchema.shape.replace_text,
-        description: ApplyEditSchema.shape.description,
+        description:
+          'Apply a text edit to a file. The edit must be approved by the user before being applied.',
+        inputSchema: {
+          uri: ApplyEditSchema.shape.uri,
+          search_text: ApplyEditSchema.shape.search_text,
+          replace_text: ApplyEditSchema.shape.replace_text,
+          description: ApplyEditSchema.shape.description,
+        },
+        outputSchema: {
+          success: z.boolean(),
+          message: z.string(),
+          reason: z.string().optional(),
+        },
       },
       async (params) => {
         try {
@@ -446,17 +596,25 @@ export class McpLspDriver {
             : {
                 success: false,
                 message: 'Edit rejected by user.',
-                reason: 'UserRejected',
               }
+
+          const structuredResult = {
+            success: result.success,
+            message: result.message,
+          }
 
           return {
             content: [{ type: 'text' as const, text: result.message }],
-            isError: !result.success,
+            structuredContent: structuredResult,
           }
         } catch (error) {
           const message = `Error: ${error instanceof Error ? error.message : String(error)}`
           return {
             content: [{ type: 'text' as const, text: message }],
+            structuredContent: {
+              success: false,
+              message,
+            },
             isError: true,
           }
         }
