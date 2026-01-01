@@ -1,7 +1,7 @@
 {
   "name": "mcp-lsp-driver",
   "version": "1.0.0",
-  "description": "MCP LSP Driver SDK for IDE Plugin Developers",
+  "description": "MCP LSP Driver for IDE plugins to easily expose LSP features via an MCP server.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,13 +25,13 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "zod": "^3.24.0"
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "zod": "^4.3.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.10",
-    "@types/node": "^22.0.0",
-    "typescript": "^5.7.0",
+    "@types/node": "^22.19.3",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.16"
   },
   "engines": {
