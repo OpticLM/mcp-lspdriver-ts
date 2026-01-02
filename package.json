@@ -1,6 +1,6 @@
 {
   "name": "mcp-lsp-driver",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "MCP LSP Driver for IDE plugins to easily expose LSP features via an MCP server.",
   "type": "module",
   "main": "dist/index.js",
@@ -23,10 +23,14 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": ["mcp", "lsp", "language-server", "ide", "vscode", "jetbrains"],
-  "author": "",
+  "author": "EFLKumo",
   "license": "MIT",
   "dependencies": {
     "zod": "^4.3.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OpticLM/mcp-lspdriver-ts"
   },
   "peerDependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1"
