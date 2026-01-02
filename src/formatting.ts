@@ -3,7 +3,17 @@
  * @internal
  */
 
-import type { CodeSnippet, Diagnostic, DocumentSymbol } from './types.js'
+import type { Diagnostic, DocumentSymbol } from './types.js'
+
+export const makeToolResult = <T extends { [x: string]: unknown }>(
+  result: T,
+): {
+  content: [{ type: 'text'; text: string }]
+  structuredContent: { [x: string]: unknown }
+} => ({
+  content: [{ type: 'text' as const, text: JSON.stringify(result ?? '') }],
+  structuredContent: result,
+})
 
 /**
  * Normalizes a URI to handle Windows/Unix path separator differences.
@@ -18,32 +28,10 @@ export function normalizeUri(uri: string): string {
 }
 
 /**
- * Formats code snippets as markdown for LLM consumption.
- */
-export function formatSnippetsAsMarkdown(snippets: CodeSnippet[]): string {
-  if (snippets.length === 0) {
-    return 'No results found.'
-  }
-
-  return snippets
-    .map((snippet) => {
-      const startLine = snippet.range.start.line + 1 // Convert to 1-based
-      const endLine = snippet.range.end.line + 1
-      const locationInfo =
-        startLine === endLine
-          ? `Line ${startLine}`
-          : `Lines ${startLine}-${endLine}`
-
-      return `### ${snippet.uri}\n${locationInfo}\n\`\`\`\n${snippet.content}\n\`\`\``
-    })
-    .join('\n\n')
-}
-
-/**
  * Generates a unique ID for pending edit operations.
  */
 export function generateEditId(): string {
-  return `edit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return `edit-${Date.now()}`
 }
 
 /**

@@ -5,29 +5,36 @@
 
 import * as z from 'zod/mini'
 
+const uri = z.string().check(z.describe('The relative file path'))
+const symbol_name = z
+  .string()
+  .check(z.describe('The text of the symbol to find'))
+
+const line_hint = z
+  .number()
+  .check(
+    z.int(),
+    z.positive(),
+    z.describe('Approximate 1-based line number where the symbol is expected'),
+  )
+
+const order_hint = z
+  ._default(z.optional(z.number().check(z.int(), z.minimum(0))), 0)
+  .check(
+    z.describe(
+      '0-based index of which occurrence to target if symbol appears multiple times',
+    ),
+  )
+
 export const FuzzyPositionSchema = z.object({
-  uri: z.string().check(z.describe('The file URI or path')),
-  symbol_name: z.string().check(z.describe('The text of the symbol to find')),
-  line_hint: z
-    .number()
-    .check(
-      z.int(),
-      z.positive(),
-      z.describe(
-        'Approximate 1-based line number where the symbol is expected',
-      ),
-    ),
-  order_hint: z
-    ._default(z.optional(z.number().check(z.int(), z.minimum(0))), 0)
-    .check(
-      z.describe(
-        '0-based index of which occurrence to target if symbol appears multiple times',
-      ),
-    ),
+  uri,
+  symbol_name,
+  line_hint,
+  order_hint,
 })
 
 export const ApplyEditSchema = z.object({
-  uri: z.string().check(z.describe('The file URI or path')),
+  uri,
   search_text: z
     .string()
     .check(
@@ -39,51 +46,39 @@ export const ApplyEditSchema = z.object({
 
 export const CallHierarchySchema = z.object({
   uri: z.string().check(z.describe('The file URI or path')),
-  symbol_name: z.string().check(z.describe('The text of the symbol to find')),
-  line_hint: z
-    .number()
-    .check(
-      z.int(),
-      z.positive(),
-      z.describe(
-        'Approximate 1-based line number where the symbol is expected',
-      ),
-    ),
-  order_hint: z
-    ._default(z.optional(z.number().check(z.int(), z.minimum(0))), 0)
-    .check(
-      z.describe(
-        '0-based index of which occurrence to target if symbol appears multiple times',
-      ),
-    ),
+  symbol_name,
+  line_hint,
+  order_hint,
   direction: z
     .enum(['incoming', 'outgoing'])
     .check(z.describe('Direction of the call hierarchy')),
 })
 
+const query = z.string().check(z.describe('The search query'))
+
+const case_sensitive = z
+  ._default(z.optional(z.boolean()), false)
+  .check(z.describe('Whether the search is case-sensitive'))
+
+const exact_match = z
+  ._default(z.optional(z.boolean()), false)
+  .check(z.describe('Whether to match exact words only'))
+
+const regex_mode = z
+  ._default(z.optional(z.boolean()), false)
+  .check(z.describe('Whether the query is a regular expression'))
+
 export const GlobalFindSchema = z.object({
-  query: z.string().check(z.describe('The search query')),
-  case_sensitive: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether the search is case-sensitive')),
-  exact_match: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether to match exact words only')),
-  regex_mode: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether the query is a regular expression')),
+  query,
+  case_sensitive,
+  exact_match,
+  regex_mode,
 })
 
 export const GlobalReplaceSchema = z.object({
-  query: z.string().check(z.describe('The search query')),
-  case_sensitive: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether the search is case-sensitive')),
-  exact_match: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether to match exact words only')),
-  regex_mode: z
-    ._default(z.optional(z.boolean()), false)
-    .check(z.describe('Whether the query is a regular expression')),
+  query,
+  case_sensitive,
+  exact_match,
+  regex_mode,
   replace_with: z.string().check(z.describe('The replacement text')),
 })

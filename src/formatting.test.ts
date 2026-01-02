@@ -5,11 +5,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatDiagnosticsAsMarkdown,
-  formatSnippetsAsMarkdown,
   formatSymbolsAsMarkdown,
   normalizeUri,
 } from './formatting.js'
-import type { CodeSnippet, Diagnostic, DocumentSymbol } from './types.js'
+import type { Diagnostic, DocumentSymbol } from './types.js'
 
 describe('normalizeUri', () => {
   it('should handle Windows-style paths', () => {
@@ -20,57 +19,6 @@ describe('normalizeUri', () => {
   it('should preserve file:// URIs', () => {
     const result = normalizeUri('file:///home/user/file.ts')
     expect(result).toBe('file:///home/user/file.ts')
-  })
-})
-
-describe('formatSnippetsAsMarkdown', () => {
-  it('should format single snippet correctly', () => {
-    const snippets: CodeSnippet[] = [
-      {
-        uri: 'test.ts',
-        range: {
-          start: { line: 0, character: 0 },
-          end: { line: 0, character: 10 },
-        },
-        content: 'const x = 1;',
-      },
-    ]
-
-    const result = formatSnippetsAsMarkdown(snippets)
-    expect(result).toContain('### test.ts')
-    expect(result).toContain('Line 1')
-    expect(result).toContain('const x = 1;')
-  })
-
-  it('should handle multiple snippets', () => {
-    const snippets: CodeSnippet[] = [
-      {
-        uri: 'file1.ts',
-        range: {
-          start: { line: 0, character: 0 },
-          end: { line: 0, character: 5 },
-        },
-        content: 'code1',
-      },
-      {
-        uri: 'file2.ts',
-        range: {
-          start: { line: 5, character: 0 },
-          end: { line: 7, character: 1 },
-        },
-        content: 'code2',
-      },
-    ]
-
-    const result = formatSnippetsAsMarkdown(snippets)
-    expect(result).toContain('### file1.ts')
-    expect(result).toContain('### file2.ts')
-    expect(result).toContain('Lines 6-8')
-  })
-
-  it('should return "No results found" for empty list', () => {
-    const result = formatSnippetsAsMarkdown([])
-    expect(result).toBe('No results found.')
   })
 })
 

@@ -13,9 +13,9 @@ import { z } from 'zod'
 import type { IdeCapabilities } from './capabilities.js'
 import {
   formatDiagnosticsAsMarkdown,
-  formatSnippetsAsMarkdown,
   formatSymbolsAsMarkdown,
   generateEditId,
+  makeToolResult,
   normalizeUri,
 } from './formatting.js'
 import {
@@ -148,14 +148,8 @@ function registerGotoDefinitionTool(
   server.registerTool(
     'goto_definition',
     {
-      description:
-        'Navigate to the definition of a symbol. Resolves fuzzy position to exact coordinates.',
-      inputSchema: {
-        uri: FuzzyPositionSchema.shape.uri,
-        symbol_name: FuzzyPositionSchema.shape.symbol_name,
-        line_hint: FuzzyPositionSchema.shape.line_hint,
-        order_hint: FuzzyPositionSchema.shape.order_hint,
-      },
+      description: 'Navigate to the definition of a symbol.',
+      inputSchema: FuzzyPositionSchema,
       outputSchema: {
         snippets: z.array(
           z.object({
@@ -177,25 +171,16 @@ function registerGotoDefinitionTool(
         }
 
         const exactPosition = await resolver.resolvePosition(uri, fuzzy)
-        const snippets = await definitionProvider.provideDefinition(
-          uri,
-          exactPosition,
-        )
-        const markdown = formatSnippetsAsMarkdown(snippets)
-
-        const structuredSnippets = snippets.map((snippet) => ({
+        const snippets = (
+          await definitionProvider.provideDefinition(uri, exactPosition)
+        ).map((snippet) => ({
           uri: snippet.uri,
           startLine: snippet.range.start.line + 1,
           endLine: snippet.range.end.line + 1,
           content: snippet.content,
         }))
 
-        return {
-          content: [{ type: 'text' as const, text: markdown }],
-          structuredContent: {
-            snippets: structuredSnippets,
-          },
-        }
+        return makeToolResult({ snippets })
       } catch (error) {
         const message =
           error instanceof SymbolResolutionError
@@ -227,12 +212,7 @@ function registerFindReferencesTool(
     {
       description:
         'Find all references to a symbol. Returns a list of locations where the symbol is used.',
-      inputSchema: {
-        uri: FuzzyPositionSchema.shape.uri,
-        symbol_name: FuzzyPositionSchema.shape.symbol_name,
-        line_hint: FuzzyPositionSchema.shape.line_hint,
-        order_hint: FuzzyPositionSchema.shape.order_hint,
-      },
+      inputSchema: FuzzyPositionSchema,
       outputSchema: {
         snippets: z.array(
           z.object({
@@ -254,25 +234,16 @@ function registerFindReferencesTool(
         }
 
         const exactPosition = await resolver.resolvePosition(uri, fuzzy)
-        const snippets = await referencesProvider.provideReferences(
-          uri,
-          exactPosition,
-        )
-        const markdown = formatSnippetsAsMarkdown(snippets)
-
-        const structuredSnippets = snippets.map((snippet) => ({
+        const snippets = (
+          await referencesProvider.provideReferences(uri, exactPosition)
+        ).map((snippet) => ({
           uri: snippet.uri,
           startLine: snippet.range.start.line + 1,
           endLine: snippet.range.end.line + 1,
           content: snippet.content,
         }))
 
-        return {
-          content: [{ type: 'text' as const, text: markdown }],
-          structuredContent: {
-            snippets: structuredSnippets,
-          },
-        }
+        return makeToolResult({ snippets })
       } catch (error) {
         const message =
           error instanceof SymbolResolutionError
@@ -303,14 +274,8 @@ function registerCallHierarchyTool(
     'call_hierarchy',
     {
       description:
-        'Get call hierarchy for a function or method. Shows incoming (callers) or outgoing (callees) calls.',
-      inputSchema: {
-        uri: CallHierarchySchema.shape.uri,
-        symbol_name: CallHierarchySchema.shape.symbol_name,
-        line_hint: CallHierarchySchema.shape.line_hint,
-        order_hint: CallHierarchySchema.shape.order_hint,
-        direction: CallHierarchySchema.shape.direction,
-      },
+        'Get call hierarchy for a function or method. Shows incoming or outgoing calls.',
+      inputSchema: CallHierarchySchema,
       outputSchema: {
         snippets: z.array(
           z.object({
@@ -332,26 +297,20 @@ function registerCallHierarchyTool(
         }
 
         const exactPosition = await resolver.resolvePosition(uri, fuzzy)
-        const snippets = await hierarchyProvider.provideCallHierarchy(
-          uri,
-          exactPosition,
-          params.direction,
-        )
-        const markdown = formatSnippetsAsMarkdown(snippets)
-
-        const structuredSnippets = snippets.map((snippet) => ({
+        const snippets = (
+          await hierarchyProvider.provideCallHierarchy(
+            uri,
+            exactPosition,
+            params.direction,
+          )
+        ).map((snippet) => ({
           uri: snippet.uri,
           startLine: snippet.range.start.line + 1,
           endLine: snippet.range.end.line + 1,
           content: snippet.content,
         }))
 
-        return {
-          content: [{ type: 'text' as const, text: markdown }],
-          structuredContent: {
-            snippets: structuredSnippets,
-          },
-        }
+        return makeToolResult({ snippets })
       } catch (error) {
         const message =
           error instanceof SymbolResolutionError
@@ -596,7 +555,6 @@ function registerApplyEditTool(
       outputSchema: {
         success: z.boolean(),
         message: z.string(),
-        reason: z.string().optional(),
       },
     },
     async (params) => {
@@ -629,15 +587,7 @@ function registerApplyEditTool(
               message: 'Edit rejected by user.',
             }
 
-        const structuredResult = {
-          success: result.success,
-          message: result.message,
-        }
-
-        return {
-          content: [{ type: 'text' as const, text: result.message }],
-          structuredContent: structuredResult,
-        }
+        return makeToolResult(result)
       } catch (error) {
         const message = `Error: ${error instanceof Error ? error.message : String(error)}`
         return {
@@ -726,12 +676,7 @@ function registerGlobalFindTool(
     'global_find',
     {
       description: 'Search for text across the entire workspace.',
-      inputSchema: {
-        query: GlobalFindSchema.shape.query,
-        case_sensitive: GlobalFindSchema.shape.case_sensitive,
-        exact_match: GlobalFindSchema.shape.exact_match,
-        regex_mode: GlobalFindSchema.shape.regex_mode,
-      },
+      inputSchema: GlobalFindSchema,
       outputSchema: {
         matches: z.array(
           z.object({
@@ -742,7 +687,7 @@ function registerGlobalFindTool(
             context: z.string(),
           }),
         ),
-        totalMatches: z.number(),
+        count: z.number(),
       },
     },
     async (params) => {
@@ -757,32 +702,7 @@ function registerGlobalFindTool(
           regexMode,
         })
 
-        // Format as markdown
-        const matchList =
-          matches.length === 0
-            ? 'No matches found.'
-            : matches
-                .map(
-                  (m) =>
-                    `- **${m.uri}** (line ${m.line}, col ${m.column}): \`${m.matchText}\`\n  ${m.context}`,
-                )
-                .join('\n')
-
-        const markdown = `## Search Results\n\n**Query:** \`${params.query}\`\n**Total Matches:** ${matches.length}\n\n${matchList}`
-
-        return {
-          content: [{ type: 'text' as const, text: markdown }],
-          structuredContent: {
-            matches: matches.map((m) => ({
-              uri: m.uri,
-              line: m.line,
-              column: m.column,
-              matchText: m.matchText,
-              context: m.context,
-            })),
-            totalMatches: matches.length,
-          },
-        }
+        return makeToolResult({ count: matches.length, matches })
       } catch (error) {
         const message = `Error: ${error instanceof Error ? error.message : String(error)}`
         return {
@@ -810,17 +730,11 @@ function registerGlobalReplaceTool(
     {
       description:
         'Replace all occurrences of text across the entire workspace.',
-      inputSchema: {
-        query: GlobalReplaceSchema.shape.query,
-        case_sensitive: GlobalReplaceSchema.shape.case_sensitive,
-        exact_match: GlobalReplaceSchema.shape.exact_match,
-        regex_mode: GlobalReplaceSchema.shape.regex_mode,
-        replace_with: GlobalReplaceSchema.shape.replace_with,
-      },
+      inputSchema: GlobalReplaceSchema,
       outputSchema: {
         success: z.boolean(),
-        replacementCount: z.number(),
-        message: z.string(),
+        count: z.number(),
+        message: z.string().optional(),
       },
     },
     async (params) => {
@@ -829,22 +743,13 @@ function registerGlobalReplaceTool(
         const exactMatch = params.exact_match ?? false
         const regexMode = params.regex_mode ?? false
 
-        const replacementCount = await globalFindProvider.globalReplace(
+        const count = await globalFindProvider.globalReplace(
           params.query,
           params.replace_with,
           { caseSensitive, exactMatch, regexMode },
         )
 
-        const message = `Successfully replaced ${replacementCount} occurrence${replacementCount === 1 ? '' : 's'}.`
-
-        return {
-          content: [{ type: 'text' as const, text: message }],
-          structuredContent: {
-            success: true,
-            replacementCount,
-            message,
-          },
-        }
+        return makeToolResult({ success: true, count })
       } catch (error) {
         const message = `Error: ${error instanceof Error ? error.message : String(error)}`
         return {

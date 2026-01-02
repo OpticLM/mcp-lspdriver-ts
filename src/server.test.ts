@@ -108,7 +108,7 @@ function createMockFilesystemProvider(
 
 function createMockGlobalFindProvider(
   matches: GlobalFindMatch[] = [],
-  replacementCount = 0,
+  count = 0,
 ): GlobalFindProvider {
   return {
     globalFind: vi.fn(
@@ -122,7 +122,7 @@ function createMockGlobalFindProvider(
         _query: string,
         _replaceWith: string,
         _options: GlobalFindOptions,
-      ): Promise<number> => replacementCount,
+      ): Promise<number> => count,
     ),
   }
 }
@@ -991,7 +991,7 @@ describe('global find and replace tools', () => {
           context: 'function searchTerm() {}',
         },
       ],
-      totalMatches: 2,
+      count: 2,
     })
   })
 
@@ -1015,7 +1015,7 @@ describe('global find and replace tools', () => {
     })
     expect(r.structuredContent).toStrictEqual({
       matches: [],
-      totalMatches: 0,
+      count: 0,
     })
   })
 
@@ -1055,8 +1055,7 @@ describe('global find and replace tools', () => {
     })
     expect(r.structuredContent).toStrictEqual({
       success: true,
-      replacementCount: 5,
-      message: 'Successfully replaced 5 occurrences.',
+      count: 5,
     })
   })
 
@@ -1081,8 +1080,7 @@ describe('global find and replace tools', () => {
     })
     expect(r.structuredContent).toStrictEqual({
       success: true,
-      replacementCount: 1,
-      message: 'Successfully replaced 1 occurrence.',
+      count: 1,
     })
   })
 
@@ -1107,8 +1105,7 @@ describe('global find and replace tools', () => {
     })
     expect(r.structuredContent).toStrictEqual({
       success: true,
-      replacementCount: 0,
-      message: 'Successfully replaced 0 occurrences.',
+      count: 0,
     })
   })
 
