@@ -18,6 +18,45 @@ import {
   makeToolResult,
   normalizeUri,
 } from './formatting.js'
+
+/**
+ * Parses a line range fragment from a URI (e.g., "#L21" or "#L21-L28").
+ * @returns null if no valid line range, or { start, end } with 1-based line numbers
+ */
+function parseLineRange(
+  fragment: string | undefined,
+): { start: number; end: number } | null {
+  if (!fragment) return null
+
+  // Match #Lxx or #Lxx-Lyy
+  const match = fragment.match(/^L(\d+)(?:-L(\d+))?$/)
+  if (!match || !match[1]) return null
+
+  const start = parseInt(match[1], 10)
+  const end = match[2] ? parseInt(match[2], 10) : start
+
+  if (start < 1 || end < start) return null
+
+  return { start, end }
+}
+
+/**
+ * Extracts lines from content based on a line range.
+ * @param content - The full file content
+ * @param range - 1-based line range { start, end }
+ * @returns The extracted lines as a string
+ */
+function extractLines(
+  content: string,
+  range: { start: number; end: number },
+): string {
+  const lines = content.split(/\r?\n/)
+  // Convert to 0-based index
+  const startIdx = range.start - 1
+  const endIdx = range.end
+  return lines.slice(startIdx, endIdx).join('\n')
+}
+
 import {
   type ResolverConfig,
   SymbolResolutionError,
@@ -121,16 +160,14 @@ function registerResources(
   server: McpServer,
   capabilities: IdeCapabilities,
 ): void {
+  registerFilesystemResource(server, capabilities)
+
   if (capabilities.diagnostics) {
     registerDiagnosticsResources(server, capabilities)
   }
 
   if (capabilities.outline) {
     registerOutlineResource(server, capabilities)
-  }
-
-  if (capabilities.filesystem) {
-    registerFilesystemResource(server, capabilities)
   }
 }
 
@@ -605,14 +642,16 @@ function registerApplyEditTool(
 
 /**
  * Registers the filesystem resource.
- * - lsp://files/{path} - file tree for a directory (git-ignored files excluded)
+ * - lsp://files/path - file tree for a directory (git-ignored files excluded)
+ * - lsp://files/path/to/file.ext - read file content
+ * - lsp://files/path/to/file.ext#L21 - read specific line
+ * - lsp://files/path/to/file.ext#L21-L28 - read line range
  */
 function registerFilesystemResource(
   server: McpServer,
   capabilities: IdeCapabilities,
 ): void {
-  const filesystemProvider = capabilities.filesystem
-  if (!filesystemProvider) return
+  const fileAccessProvider = capabilities.fileAccess
 
   const filesystemTemplate = new ResourceTemplate('lsp://files/{+path}', {
     list: undefined, // Cannot enumerate all directories
@@ -623,36 +662,66 @@ function registerFilesystemResource(
     filesystemTemplate,
     {
       description:
-        'File tree for a directory, excluding git-ignored files. Use the folder path after lsp://files/',
-      mimeType: 'text/markdown',
+        'Access filesystem resources. For directories: returns file tree (git-ignored files excluded). ' +
+        'For files: returns file content. Supports line ranges with #L23 or #L23-L30 fragment.',
     },
-    async (_uri, variables) => {
+    async (uri, variables) => {
+      const uriString = uri.toString()
+
       try {
-        const path = variables.path as string
+        const pathWithFragment = variables.path as string
+
+        // Parse fragment for line range (e.g., #L23 or #L23-L30)
+        let fragment: string | undefined
+        let path = pathWithFragment
+        const hashIndex = pathWithFragment.indexOf('#')
+        if (hashIndex !== -1) {
+          fragment = pathWithFragment.slice(hashIndex + 1)
+          path = pathWithFragment.slice(0, hashIndex)
+        }
+
         const normalizedPath = normalizeUri(path)
-        const files = await filesystemProvider.getFileTree(normalizedPath)
+        const lineRange = parseLineRange(fragment)
 
-        const markdown =
-          files.length === 0
-            ? 'No files found in directory.'
-            : files.map((f) => `- ${f}`).join('\n')
+        // Try reading as a file first
+        try {
+          const content = await fileAccessProvider.readFile(normalizedPath)
 
-        return {
-          contents: [
-            {
-              uri: `lsp://files/${path}`,
-              mimeType: 'text/markdown',
-              text: markdown,
-            },
-          ],
+          // If we have a line range, extract those lines
+          const resultContent = lineRange
+            ? extractLines(content, lineRange)
+            : content
+
+          return {
+            contents: [
+              {
+                uri: uriString,
+                mimeType: 'text/plain',
+                text: resultContent,
+              },
+            ],
+          }
+        } catch {
+          // File reading failed, try as directory
+          const files = await fileAccessProvider.getFileTree(normalizedPath)
+
+          return {
+            contents: [
+              {
+                uri: uriString,
+                mimeType: 'application/json',
+                text: JSON.stringify(files),
+              },
+            ],
+          }
         }
       } catch (error) {
         const message = `Error: ${error instanceof Error ? error.message : String(error)}`
         return {
           contents: [
             {
-              uri: `lsp://files/${variables.path}`,
-              mimeType: 'text/markdown',
+              uri: uriString,
+              mimeType: 'text/plain',
               text: message,
             },
           ],

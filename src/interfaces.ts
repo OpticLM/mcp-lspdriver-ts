@@ -26,6 +26,14 @@ export interface FileAccessProvider {
    * @throws Error if the file cannot be read
    */
   readFile(uri: UnifiedUri): Promise<string>
+
+  /**
+   * Gets the file tree for a directory, excluding git-ignored files.
+   *
+   * @param folderPath - The path to the folder to read
+   * @returns Array of file/folder paths in the directory tree
+   */
+  getFileTree(folderPath: UnifiedUri): Promise<string[]>
 }
 
 // ============================================================================

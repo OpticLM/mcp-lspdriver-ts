@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   DefinitionProvider,
   DiagnosticsProvider,
-  FilesystemProvider,
   GlobalFindMatch,
   GlobalFindOptions,
   GlobalFindProvider,
@@ -36,6 +35,12 @@ function createMockFileAccess(
       }
       return content
     }),
+
+    getFileTree: vi.fn(async () => [
+      'src/index.ts',
+      'src/utils.ts',
+      'README.md',
+    ]),
   }
 }
 
@@ -95,14 +100,6 @@ function createMockOutlineProvider(
 function createMockUserInteraction(approved = true): UserInteractionProvider {
   return {
     previewAndApplyEdits: vi.fn(async () => approved),
-  }
-}
-
-function createMockFilesystemProvider(
-  files: string[] = [],
-): FilesystemProvider {
-  return {
-    getFileTree: vi.fn(async () => files),
   }
 }
 
@@ -882,44 +879,92 @@ describe('resource integration', () => {
 
   it('should register and access filesystem resource', async () => {
     const server = createMockServer()
-    const files = ['src/index.ts', 'src/utils.ts', 'README.md']
-    const filesystemProvider = createMockFilesystemProvider(files)
     const capabilities: IdeCapabilities = {
       fileAccess: createMockFileAccess(),
-      filesystem: filesystemProvider,
     }
 
     const { success } = installMcpLspDriver({ server, capabilities })
     expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
-    const r = await client.readResource({ uri: 'lsp://files/src' })
+    const r = await client.readResource({ uri: 'lsp://files/file:///src' })
     expect(r.contents).toHaveLength(1)
     expect(r.contents[0]).toStrictEqual({
-      mimeType: 'text/markdown',
-      text: '- src/index.ts\n- src/utils.ts\n- README.md',
-      uri: 'lsp://files/src',
+      mimeType: 'application/json',
+      text: '["src/index.ts","src/utils.ts","README.md"]',
+      uri: 'lsp://files/file:///src',
     })
   })
 
-  it('should handle empty directory in filesystem resource', async () => {
+  it('should read file content via filesystem resource', async () => {
     const server = createMockServer()
-    const filesystemProvider = createMockFilesystemProvider([])
+    const fileContent = 'line1\nline2\nline3\nline4\nline5'
     const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(),
-      filesystem: filesystemProvider,
+      fileAccess: createMockFileAccess({
+        'file:///src/test.ts': fileContent,
+      }),
     }
 
     const { success } = installMcpLspDriver({ server, capabilities })
     expect(success).toBeTruthy()
 
     const client = await createAndConnectMockClient(server)
-    const r = await client.readResource({ uri: 'lsp://files/empty' })
+    const r = await client.readResource({
+      uri: 'lsp://files/file:///src/test.ts',
+    })
     expect(r.contents).toHaveLength(1)
     expect(r.contents[0]).toStrictEqual({
-      mimeType: 'text/markdown',
-      text: 'No files found in directory.',
-      uri: 'lsp://files/empty',
+      mimeType: 'text/plain',
+      text: fileContent,
+      uri: 'lsp://files/file:///src/test.ts',
+    })
+  })
+
+  it('should read specific line from file via filesystem resource', async () => {
+    const server = createMockServer()
+    const fileContent = 'line1\nline2\nline3\nline4\nline5'
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess({
+        'file:///src/test.ts': fileContent,
+      }),
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({
+      uri: 'lsp://files/file:///src/test.ts#L3',
+    })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/plain',
+      text: 'line3',
+      uri: 'lsp://files/file:///src/test.ts#L3',
+    })
+  })
+
+  it('should read line range from file via filesystem resource', async () => {
+    const server = createMockServer()
+    const fileContent = 'line1\nline2\nline3\nline4\nline5'
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess({
+        'file:///src/test.ts': fileContent,
+      }),
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({
+      uri: 'lsp://files/file:///src/test.ts#L2-L4',
+    })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/plain',
+      text: 'line2\nline3\nline4',
+      uri: 'lsp://files/file:///src/test.ts#L2-L4',
     })
   })
 })

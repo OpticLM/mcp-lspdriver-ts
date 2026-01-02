@@ -112,19 +112,6 @@ export interface OutlineProvider {
 }
 
 /**
- * Provides filesystem access with git-ignore support.
- */
-export interface FilesystemProvider {
-  /**
-   * Gets the file tree for a directory, excluding git-ignored files.
-   *
-   * @param folderPath - The path to the folder to read
-   * @returns Array of file/folder paths in the directory tree
-   */
-  getFileTree(folderPath: string): Promise<string[]>
-}
-
-/**
  * Search options for global find operations.
  */
 export interface GlobalFindOptions {
@@ -219,9 +206,6 @@ export interface IdeCapabilities {
 
   /** Optional: Provides document outline (symbols) for files */
   outline?: OutlineProvider
-
-  /** Optional: Provides filesystem access with git-ignore support */
-  filesystem?: FilesystemProvider
 
   /** Optional: Provides global find and replace functionality */
   globalFind?: GlobalFindProvider

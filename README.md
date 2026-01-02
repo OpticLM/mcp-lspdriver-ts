@@ -35,7 +35,9 @@ const server = new McpServer({
 const fileAccess = {
   readFile: async (uri: string) => {
     return await fs.readFile(uri, 'utf-8')
-  }
+  },
+
+  getFileTree: (uri: string) => yourIDE.workspace.files
 }
 
 // 3. Implement User Interaction (required for edits)
@@ -72,13 +74,6 @@ const outline = {
   }
 }
 
-const filesystem = {
-  getFileTree: async (folderPath) => {
-    // Get file tree excluding git-ignored files
-    return await yourIDE.getFileTree(folderPath)
-  }
-}
-
 // 5. Register LSP tools and resources on the server
 const capabilities: IdeCapabilities = {
   fileAccess,
@@ -110,8 +105,10 @@ await server.connect(transport)
 Provides disk access for reading files:
 
 ```typescript
+// type UnifiedUri = string
 interface FileAccessProvider {
   readFile(uri: UnifiedUri): Promise<string>
+  getFileTree(folderPath: UnifiedUri): Promise<string[]>
 }
 ```
 
@@ -174,16 +171,6 @@ interface OutlineProvider {
 }
 ```
 
-#### `FilesystemProvider`
-
-```typescript
-interface FilesystemProvider {
-  getFileTree(folderPath: string): Promise<string[]>
-}
-```
-
-Provides filesystem access with git-ignore support. Returns file/folder paths in a directory tree, excluding git-ignored files.
-
 #### `GlobalFindProvider`
 
 ```typescript
@@ -218,7 +205,6 @@ interface IdeCapabilities {
   hierarchy?: HierarchyProvider             // Enables call_hierarchy tool
   diagnostics?: DiagnosticsProvider         // Enables diagnostics resources
   outline?: OutlineProvider                 // Enables outline resource
-  filesystem?: FilesystemProvider           // Enables filesystem resource
   globalFind?: GlobalFindProvider           // Enables global_find and global_replace tools
   onDiagnosticsChanged?: (callback: OnDiagnosticsChangedCallback) => void
 }
@@ -299,7 +285,7 @@ The SDK automatically registers resources based on which capabilities you provid
 
 Get diagnostics (errors, warnings) for a specific file.
 
-**Resource URI Pattern:** `lsp://diagnostics/{path}`
+**Resource URI Pattern:** `lsp://diagnostics/{+path}`
 
 **Example:** `lsp://diagnostics/src/main.ts`
 
@@ -323,7 +309,7 @@ Returns workspace diagnostics grouped by file, formatted as markdown.
 
 Get the document outline (symbol tree) for a file.
 
-**Resource URI Pattern:** `lsp://outline/{path}`
+**Resource URI Pattern:** `lsp://outline/{+path}`
 
 **Example:** `lsp://outline/src/components/Button.tsx`
 
@@ -336,13 +322,11 @@ No subscription support for this resource (read-only).
 
 ### `lsp://files/{path}`
 
-Get the file tree for a directory, excluding git-ignored files.
+For directories: gets the file tree for a directory, excluding git-ignored files. For files: gets file content with optional line range.
 
-**Resource URI Pattern:** `lsp://files/{path}`
+**Resource URI Pattern:** `lsp://files/{+path}`
 
-**Example:** `lsp://files/src`
-
-Returns a list of file/folder paths in the directory tree, formatted as markdown. Git-ignored files and directories are automatically excluded from the results.
+**Example:** `lsp://files/src`, `lsp://files/src/index.ts`, `lsp://files/src/index.ts#L1-L2`
 
 No subscription support for this resource (read-only).
 

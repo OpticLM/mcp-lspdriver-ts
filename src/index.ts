@@ -11,7 +11,6 @@
 export type {
   DefinitionProvider,
   DiagnosticsProvider,
-  FilesystemProvider,
   GlobalFindMatch,
   GlobalFindOptions,
   GlobalFindProvider,
