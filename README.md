@@ -37,7 +37,9 @@ const fileAccess = {
     return await fs.readFile(uri, 'utf-8')
   },
 
-  getFileTree: (uri: string) => yourIDE.workspace.files
+  getFileTree: (uri: string) => yourIDE.workspace.getFileTree(uri),
+
+  readDirectory: (uri: string) => yourIDE.workspace.readDirectory(uri)
 }
 
 // 3. Implement User Interaction (required for edits)
@@ -109,6 +111,7 @@ Provides disk access for reading files:
 interface FileAccessProvider {
   readFile(uri: UnifiedUri): Promise<string>
   getFileTree(folderPath: UnifiedUri): Promise<string[]>
+  readDirectory(folderPath: UnifiedUri): Promise<string[]>
 }
 ```
 
@@ -320,9 +323,21 @@ Returns document symbols formatted as a hierarchical markdown outline, including
 
 No subscription support for this resource (read-only).
 
+### `lsp://filetree/{path}`
+
+Get the complete file tree for a directory, excluding git-ignored files.
+
+**Resource URI Pattern:** `lsp://filetree/{+path}`
+
+**Example:** `lsp://filetree/src`, `lsp://filetree/.`
+
+Returns a JSON array of all file paths in the directory tree (recursive). Use "." for the root directory.
+
+No subscription support for this resource (read-only).
+
 ### `lsp://files/{path}`
 
-For directories: gets the file tree for a directory, excluding git-ignored files. For files: gets file content with optional line range.
+For directories: returns directory children (git-ignored files excluded, similar to `ls`). For files: gets file content with optional line range.
 
 **Resource URI Pattern:** `lsp://files/{+path}`
 

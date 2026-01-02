@@ -19,10 +19,15 @@ export const makeToolResult = <T extends { [x: string]: unknown }>(
  * Normalizes a URI to handle Windows/Unix path separator differences.
  */
 export function normalizeUri(uri: string): string {
+  if (uri.includes('..')) {
+    throw new Error('URI could not include ".." operator')
+  }
+
   // If it's already a file:// URI, leave it alone
   if (uri.startsWith('file://')) {
     return uri
   }
+
   // Normalize backslashes to forward slashes for consistency
   return uri.replace(/\\/g, '/')
 }

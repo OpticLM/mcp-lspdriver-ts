@@ -20,6 +20,23 @@ describe('normalizeUri', () => {
     const result = normalizeUri('file:///home/user/file.ts')
     expect(result).toBe('file:///home/user/file.ts')
   })
+
+  it('should throw error when URI contains ".." (path traversal)', () => {
+    expect(() => normalizeUri('../parent/file.ts')).toThrow(
+      'URI could not include ".." operator',
+    )
+    expect(() => normalizeUri('src/../file.ts')).toThrow(
+      'URI could not include ".." operator',
+    )
+    expect(() => normalizeUri('file:///../etc/passwd')).toThrow(
+      'URI could not include ".." operator',
+    )
+  })
+
+  it('should allow single dots in paths', () => {
+    const result = normalizeUri('./current/file.ts')
+    expect(result).toBe('./current/file.ts')
+  })
 })
 
 describe('formatDiagnosticsAsMarkdown', () => {

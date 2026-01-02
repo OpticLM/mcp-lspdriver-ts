@@ -28,12 +28,19 @@ export interface FileAccessProvider {
   readFile(uri: UnifiedUri): Promise<string>
 
   /**
+   * Read children in a directory, exluding git-ignored files, similar to Unix `ls` command
+   * @param relativePath - The path to the folder to read
+   * @returns Array of file/folder paths in the directory
+   */
+  readDirectory(relativePath: UnifiedUri): Promise<string[]>
+
+  /**
    * Gets the file tree for a directory, excluding git-ignored files.
    *
-   * @param folderPath - The path to the folder to read
+   * @param relativePath - The path to the folder to read
    * @returns Array of file/folder paths in the directory tree
    */
-  getFileTree(folderPath: UnifiedUri): Promise<string[]>
+  getFileTree?: (relativePath: UnifiedUri) => Promise<string[]>
 }
 
 // ============================================================================

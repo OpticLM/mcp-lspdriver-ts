@@ -651,7 +651,33 @@ function registerFilesystemResource(
   server: McpServer,
   capabilities: IdeCapabilities,
 ): void {
-  const fileAccessProvider = capabilities.fileAccess
+  const { readFile, readDirectory, getFileTree } = capabilities.fileAccess
+
+  if (getFileTree !== undefined) {
+    const fileTreeTemplate = new ResourceTemplate('lsp://filetree/{+path}', {
+      list: undefined,
+    })
+
+    server.registerResource(
+      'fileTree',
+      fileTreeTemplate,
+      {
+        description:
+          'Access file tree inside a relative path or use "." for root.',
+      },
+      async (uri, { path }) => ({
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: 'application/json',
+            text: JSON.stringify(
+              (await getFileTree(normalizeUri(path as string))) ?? '',
+            ),
+          },
+        ],
+      }),
+    )
+  }
 
   const filesystemTemplate = new ResourceTemplate('lsp://files/{+path}', {
     list: undefined, // Cannot enumerate all directories
@@ -662,7 +688,7 @@ function registerFilesystemResource(
     filesystemTemplate,
     {
       description:
-        'Access filesystem resources. For directories: returns file tree (git-ignored files excluded). ' +
+        'Access filesystem resources. For directories: returns children (git-ignored files excluded). ' +
         'For files: returns file content. Supports line ranges with #L23 or #L23-L30 fragment.',
     },
     async (uri, variables) => {
@@ -685,7 +711,7 @@ function registerFilesystemResource(
 
         // Try reading as a file first
         try {
-          const content = await fileAccessProvider.readFile(normalizedPath)
+          const content = await readFile(normalizedPath)
 
           // If we have a line range, extract those lines
           const resultContent = lineRange
@@ -703,7 +729,7 @@ function registerFilesystemResource(
           }
         } catch {
           // File reading failed, try as directory
-          const files = await fileAccessProvider.getFileTree(normalizedPath)
+          const files = await readDirectory(normalizedPath)
 
           return {
             contents: [

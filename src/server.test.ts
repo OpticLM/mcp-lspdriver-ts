@@ -41,6 +41,8 @@ function createMockFileAccess(
       'src/utils.ts',
       'README.md',
     ]),
+
+    readDirectory: vi.fn(async () => ['file1.ts', 'file2.ts', 'subdir']),
   }
 }
 
@@ -877,10 +879,10 @@ describe('resource integration', () => {
     })
   })
 
-  it('should register and access filesystem resource', async () => {
+  it('should register and access filesystem resource for directory listing', async () => {
     const server = createMockServer()
     const capabilities: IdeCapabilities = {
-      fileAccess: createMockFileAccess(),
+      fileAccess: createMockFileAccess({}), // No files, so it falls back to readDirectory
     }
 
     const { success } = installMcpLspDriver({ server, capabilities })
@@ -891,7 +893,7 @@ describe('resource integration', () => {
     expect(r.contents).toHaveLength(1)
     expect(r.contents[0]).toStrictEqual({
       mimeType: 'application/json',
-      text: '["src/index.ts","src/utils.ts","README.md"]',
+      text: '["file1.ts","file2.ts","subdir"]',
       uri: 'lsp://files/file:///src',
     })
   })
@@ -965,6 +967,65 @@ describe('resource integration', () => {
       mimeType: 'text/plain',
       text: 'line2\nline3\nline4',
       uri: 'lsp://files/file:///src/test.ts#L2-L4',
+    })
+  })
+
+  it('should register and access filetree resource', async () => {
+    const server = createMockServer()
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://filetree/src' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'application/json',
+      text: '["src/index.ts","src/utils.ts","README.md"]',
+      uri: 'lsp://filetree/src',
+    })
+  })
+
+  it('should access filetree resource with nested path', async () => {
+    const server = createMockServer()
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({
+      uri: 'lsp://filetree/src/components',
+    })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'application/json',
+      text: '["src/index.ts","src/utils.ts","README.md"]',
+      uri: 'lsp://filetree/src/components',
+    })
+  })
+
+  it('should fallback to readDirectory when file read fails on lsp://files', async () => {
+    const server = createMockServer()
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess({}), // No files, readFile will fail
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://files/src' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'application/json',
+      text: '["file1.ts","file2.ts","subdir"]',
+      uri: 'lsp://files/src',
     })
   })
 })
