@@ -60,3 +60,30 @@ export const CallHierarchySchema = z.object({
     .enum(['incoming', 'outgoing'])
     .check(z.describe('Direction of the call hierarchy')),
 })
+
+export const GlobalFindSchema = z.object({
+  query: z.string().check(z.describe('The search query')),
+  case_sensitive: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether the search is case-sensitive')),
+  exact_match: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether to match exact words only')),
+  regex_mode: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether the query is a regular expression')),
+})
+
+export const GlobalReplaceSchema = z.object({
+  query: z.string().check(z.describe('The search query')),
+  case_sensitive: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether the search is case-sensitive')),
+  exact_match: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether to match exact words only')),
+  regex_mode: z
+    ._default(z.optional(z.boolean()), false)
+    .check(z.describe('Whether the query is a regular expression')),
+  replace_with: z.string().check(z.describe('The replacement text')),
+})

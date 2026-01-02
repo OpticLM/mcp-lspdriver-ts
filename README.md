@@ -72,6 +72,13 @@ const outline = {
   }
 }
 
+const filesystem = {
+  getFileTree: async (folderPath) => {
+    // Get file tree excluding git-ignored files
+    return await yourIDE.getFileTree(folderPath)
+  }
+}
+
 // 5. Register LSP tools and resources on the server
 const capabilities: IdeCapabilities = {
   fileAccess,
@@ -79,6 +86,7 @@ const capabilities: IdeCapabilities = {
   definition,
   diagnostics,
   outline,
+  filesystem,
   onDiagnosticsChanged: (callback) => {
     // Register for diagnostic changes
     yourIDE.onDiagnosticsChanged((uri) => callback(uri))
@@ -166,6 +174,37 @@ interface OutlineProvider {
 }
 ```
 
+#### `FilesystemProvider`
+
+```typescript
+interface FilesystemProvider {
+  getFileTree(folderPath: string): Promise<string[]>
+}
+```
+
+Provides filesystem access with git-ignore support. Returns file/folder paths in a directory tree, excluding git-ignored files.
+
+#### `GlobalFindProvider`
+
+```typescript
+interface GlobalFindProvider {
+  globalFind(query: string, options: GlobalFindOptions): Promise<GlobalFindMatch[]>
+  globalReplace(query: string, replaceWith: string, options: GlobalFindOptions): Promise<number>
+}
+```
+
+Provides global find and replace functionality across the workspace. `GlobalFindOptions` includes:
+- `caseSensitive`: Whether the search is case-sensitive (default: false)
+- `exactMatch`: Whether to match exact words only (default: false)
+- `regexMode`: Whether the query is a regular expression (default: false)
+
+`GlobalFindMatch` includes:
+- `uri`: File URI containing the match
+- `line`: 1-based line number
+- `column`: 1-based column number
+- `matchText`: The matching text
+- `context`: Context around the match (e.g., the full line)
+
 ### IdeCapabilities
 
 Combine all providers into a single configuration:
@@ -179,6 +218,8 @@ interface IdeCapabilities {
   hierarchy?: HierarchyProvider             // Enables call_hierarchy tool
   diagnostics?: DiagnosticsProvider         // Enables diagnostics resources
   outline?: OutlineProvider                 // Enables outline resource
+  filesystem?: FilesystemProvider           // Enables filesystem resource
+  globalFind?: GlobalFindProvider           // Enables global_find and global_replace tools
   onDiagnosticsChanged?: (callback: OnDiagnosticsChangedCallback) => void
 }
 ```
@@ -221,6 +262,35 @@ Apply a text edit to a file (requires user approval).
 - `replace_text`: New text to insert
 - `description`: Rationale for the edit
 
+### `global_find`
+
+Search for text across the entire workspace.
+
+**Inputs:**
+- `query`: The search query (required)
+- `case_sensitive`: Whether the search is case-sensitive (optional, default: false)
+- `exact_match`: Whether to match exact words only (optional, default: false)
+- `regex_mode`: Whether the query is a regular expression (optional, default: false)
+
+**Returns:**
+- Array of matches with file URI, line, column, matching text, and context
+- Total number of matches found
+
+### `global_replace`
+
+Replace all occurrences of text across the entire workspace.
+
+**Inputs:**
+- `query`: The search query (required)
+- `replace_with`: The replacement text (required)
+- `case_sensitive`: Whether the search is case-sensitive (optional, default: false)
+- `exact_match`: Whether to match exact words only (optional, default: false)
+- `regex_mode`: Whether the query is a regular expression (optional, default: false)
+
+**Returns:**
+- Number of replacements made
+- Success status and message
+
 ## MCP Resources
 
 The SDK automatically registers resources based on which capabilities you provide:
@@ -261,6 +331,18 @@ Returns document symbols formatted as a hierarchical markdown outline, including
 - Symbol names and kinds (class, function, method, etc.)
 - Source locations
 - Nested children (e.g., methods within classes)
+
+No subscription support for this resource (read-only).
+
+### `lsp://files/{path}`
+
+Get the file tree for a directory, excluding git-ignored files.
+
+**Resource URI Pattern:** `lsp://files/{path}`
+
+**Example:** `lsp://files/src`
+
+Returns a list of file/folder paths in the directory tree, formatted as markdown. Git-ignored files and directories are automatically excluded from the results.
 
 No subscription support for this resource (read-only).
 

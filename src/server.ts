@@ -27,6 +27,8 @@ import {
   ApplyEditSchema,
   CallHierarchySchema,
   FuzzyPositionSchema,
+  GlobalFindSchema,
+  GlobalReplaceSchema,
 } from './schemas.js'
 import type {
   EditResult,
@@ -108,6 +110,11 @@ function registerTools(
   if (capabilities.userInteraction) {
     registerApplyEditTool(server, capabilities, resolver)
   }
+
+  if (capabilities.globalFind) {
+    registerGlobalFindTool(server, capabilities)
+    registerGlobalReplaceTool(server, capabilities)
+  }
 }
 
 function registerResources(
@@ -120,6 +127,10 @@ function registerResources(
 
   if (capabilities.outline) {
     registerOutlineResource(server, capabilities)
+  }
+
+  if (capabilities.filesystem) {
+    registerFilesystemResource(server, capabilities)
   }
 }
 
@@ -633,6 +644,214 @@ function registerApplyEditTool(
           content: [{ type: 'text' as const, text: message }],
           structuredContent: {
             success: false,
+            message,
+          },
+          isError: true,
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the filesystem resource.
+ * - lsp://files/{path} - file tree for a directory (git-ignored files excluded)
+ */
+function registerFilesystemResource(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  const filesystemProvider = capabilities.filesystem
+  if (!filesystemProvider) return
+
+  const filesystemTemplate = new ResourceTemplate('lsp://files/{+path}', {
+    list: undefined, // Cannot enumerate all directories
+  })
+
+  server.registerResource(
+    'filesystem',
+    filesystemTemplate,
+    {
+      description:
+        'File tree for a directory, excluding git-ignored files. Use the folder path after lsp://files/',
+      mimeType: 'text/markdown',
+    },
+    async (_uri, variables) => {
+      try {
+        const path = variables.path as string
+        const normalizedPath = normalizeUri(path)
+        const files = await filesystemProvider.getFileTree(normalizedPath)
+
+        const markdown =
+          files.length === 0
+            ? 'No files found in directory.'
+            : files.map((f) => `- ${f}`).join('\n')
+
+        return {
+          contents: [
+            {
+              uri: `lsp://files/${path}`,
+              mimeType: 'text/markdown',
+              text: markdown,
+            },
+          ],
+        }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          contents: [
+            {
+              uri: `lsp://files/${variables.path}`,
+              mimeType: 'text/markdown',
+              text: message,
+            },
+          ],
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the global_find tool.
+ */
+function registerGlobalFindTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  const globalFindProvider = capabilities.globalFind
+  if (!globalFindProvider) return
+
+  server.registerTool(
+    'global_find',
+    {
+      description: 'Search for text across the entire workspace.',
+      inputSchema: {
+        query: GlobalFindSchema.shape.query,
+        case_sensitive: GlobalFindSchema.shape.case_sensitive,
+        exact_match: GlobalFindSchema.shape.exact_match,
+        regex_mode: GlobalFindSchema.shape.regex_mode,
+      },
+      outputSchema: {
+        matches: z.array(
+          z.object({
+            uri: z.string(),
+            line: z.number(),
+            column: z.number(),
+            matchText: z.string(),
+            context: z.string(),
+          }),
+        ),
+        totalMatches: z.number(),
+      },
+    },
+    async (params) => {
+      try {
+        const caseSensitive = params.case_sensitive ?? false
+        const exactMatch = params.exact_match ?? false
+        const regexMode = params.regex_mode ?? false
+
+        const matches = await globalFindProvider.globalFind(params.query, {
+          caseSensitive,
+          exactMatch,
+          regexMode,
+        })
+
+        // Format as markdown
+        const matchList =
+          matches.length === 0
+            ? 'No matches found.'
+            : matches
+                .map(
+                  (m) =>
+                    `- **${m.uri}** (line ${m.line}, col ${m.column}): \`${m.matchText}\`\n  ${m.context}`,
+                )
+                .join('\n')
+
+        const markdown = `## Search Results\n\n**Query:** \`${params.query}\`\n**Total Matches:** ${matches.length}\n\n${matchList}`
+
+        return {
+          content: [{ type: 'text' as const, text: markdown }],
+          structuredContent: {
+            matches: matches.map((m) => ({
+              uri: m.uri,
+              line: m.line,
+              column: m.column,
+              matchText: m.matchText,
+              context: m.context,
+            })),
+            totalMatches: matches.length,
+          },
+        }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: { error: message },
+          isError: true,
+        }
+      }
+    },
+  )
+}
+
+/**
+ * Registers the global_replace tool.
+ */
+function registerGlobalReplaceTool(
+  server: McpServer,
+  capabilities: IdeCapabilities,
+): void {
+  const globalFindProvider = capabilities.globalFind
+  if (!globalFindProvider) return
+
+  server.registerTool(
+    'global_replace',
+    {
+      description:
+        'Replace all occurrences of text across the entire workspace.',
+      inputSchema: {
+        query: GlobalReplaceSchema.shape.query,
+        case_sensitive: GlobalReplaceSchema.shape.case_sensitive,
+        exact_match: GlobalReplaceSchema.shape.exact_match,
+        regex_mode: GlobalReplaceSchema.shape.regex_mode,
+        replace_with: GlobalReplaceSchema.shape.replace_with,
+      },
+      outputSchema: {
+        success: z.boolean(),
+        replacementCount: z.number(),
+        message: z.string(),
+      },
+    },
+    async (params) => {
+      try {
+        const caseSensitive = params.case_sensitive ?? false
+        const exactMatch = params.exact_match ?? false
+        const regexMode = params.regex_mode ?? false
+
+        const replacementCount = await globalFindProvider.globalReplace(
+          params.query,
+          params.replace_with,
+          { caseSensitive, exactMatch, regexMode },
+        )
+
+        const message = `Successfully replaced ${replacementCount} occurrence${replacementCount === 1 ? '' : 's'}.`
+
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: {
+            success: true,
+            replacementCount,
+            message,
+          },
+        }
+      } catch (error) {
+        const message = `Error: ${error instanceof Error ? error.message : String(error)}`
+        return {
+          content: [{ type: 'text' as const, text: message }],
+          structuredContent: {
+            success: false,
+            replacementCount: 0,
             message,
           },
           isError: true,

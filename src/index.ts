@@ -11,6 +11,10 @@
 export type {
   DefinitionProvider,
   DiagnosticsProvider,
+  FilesystemProvider,
+  GlobalFindMatch,
+  GlobalFindOptions,
+  GlobalFindProvider,
   HierarchyProvider,
   IdeCapabilities,
   OnDiagnosticsChangedCallback,

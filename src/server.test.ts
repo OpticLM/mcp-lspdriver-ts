@@ -5,6 +5,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   DefinitionProvider,
   DiagnosticsProvider,
+  FilesystemProvider,
+  GlobalFindMatch,
+  GlobalFindOptions,
+  GlobalFindProvider,
   HierarchyProvider,
   IdeCapabilities,
   OnDiagnosticsChangedCallback,
@@ -91,6 +95,35 @@ function createMockOutlineProvider(
 function createMockUserInteraction(approved = true): UserInteractionProvider {
   return {
     previewAndApplyEdits: vi.fn(async () => approved),
+  }
+}
+
+function createMockFilesystemProvider(
+  files: string[] = [],
+): FilesystemProvider {
+  return {
+    getFileTree: vi.fn(async () => files),
+  }
+}
+
+function createMockGlobalFindProvider(
+  matches: GlobalFindMatch[] = [],
+  replacementCount = 0,
+): GlobalFindProvider {
+  return {
+    globalFind: vi.fn(
+      async (
+        _query: string,
+        _options: GlobalFindOptions,
+      ): Promise<GlobalFindMatch[]> => matches,
+    ),
+    globalReplace: vi.fn(
+      async (
+        _query: string,
+        _replaceWith: string,
+        _options: GlobalFindOptions,
+      ): Promise<number> => replacementCount,
+    ),
   }
 }
 
@@ -845,5 +878,298 @@ describe('resource integration', () => {
     - **method** \`constructor\` (lines 5-7)`,
       uri: 'lsp://outline/test.ts',
     })
+  })
+
+  it('should register and access filesystem resource', async () => {
+    const server = createMockServer()
+    const files = ['src/index.ts', 'src/utils.ts', 'README.md']
+    const filesystemProvider = createMockFilesystemProvider(files)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      filesystem: filesystemProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://files/src' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: '- src/index.ts\n- src/utils.ts\n- README.md',
+      uri: 'lsp://files/src',
+    })
+  })
+
+  it('should handle empty directory in filesystem resource', async () => {
+    const server = createMockServer()
+    const filesystemProvider = createMockFilesystemProvider([])
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      filesystem: filesystemProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.readResource({ uri: 'lsp://files/empty' })
+    expect(r.contents).toHaveLength(1)
+    expect(r.contents[0]).toStrictEqual({
+      mimeType: 'text/markdown',
+      text: 'No files found in directory.',
+      uri: 'lsp://files/empty',
+    })
+  })
+})
+
+describe('global find and replace tools', () => {
+  it('should register global_find tool when globalFind provider is available', () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider()
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+  })
+
+  it('should register global_find tool and return formatted results', async () => {
+    const server = createMockServer()
+    const matches: GlobalFindMatch[] = [
+      {
+        uri: 'file:///src/index.ts',
+        line: 10,
+        column: 5,
+        matchText: 'searchTerm',
+        context: 'const searchTerm = "value"',
+      },
+      {
+        uri: 'file:///src/utils.ts',
+        line: 25,
+        column: 12,
+        matchText: 'searchTerm',
+        context: 'function searchTerm() {}',
+      },
+    ]
+    const globalFindProvider = createMockGlobalFindProvider(matches)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.callTool({
+      name: 'global_find',
+      arguments: {
+        query: 'searchTerm',
+        case_sensitive: true,
+        exact_match: false,
+        regex_mode: false,
+      },
+    })
+    expect(r.structuredContent).toStrictEqual({
+      matches: [
+        {
+          uri: 'file:///src/index.ts',
+          line: 10,
+          column: 5,
+          matchText: 'searchTerm',
+          context: 'const searchTerm = "value"',
+        },
+        {
+          uri: 'file:///src/utils.ts',
+          line: 25,
+          column: 12,
+          matchText: 'searchTerm',
+          context: 'function searchTerm() {}',
+        },
+      ],
+      totalMatches: 2,
+    })
+  })
+
+  it('should handle global_find with no matches', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([])
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.callTool({
+      name: 'global_find',
+      arguments: {
+        query: 'nonexistent',
+      },
+    })
+    expect(r.structuredContent).toStrictEqual({
+      matches: [],
+      totalMatches: 0,
+    })
+  })
+
+  it('should register global_replace tool when globalFind provider is available', () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider()
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+  })
+
+  it('should register global_replace tool and return replacement count', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([], 5)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.callTool({
+      name: 'global_replace',
+      arguments: {
+        query: 'oldName',
+        replace_with: 'newName',
+        case_sensitive: true,
+        exact_match: true,
+        regex_mode: false,
+      },
+    })
+    expect(r.structuredContent).toStrictEqual({
+      success: true,
+      replacementCount: 5,
+      message: 'Successfully replaced 5 occurrences.',
+    })
+  })
+
+  it('should handle global_replace with singular occurrence message', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([], 1)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.callTool({
+      name: 'global_replace',
+      arguments: {
+        query: 'oldName',
+        replace_with: 'newName',
+      },
+    })
+    expect(r.structuredContent).toStrictEqual({
+      success: true,
+      replacementCount: 1,
+      message: 'Successfully replaced 1 occurrence.',
+    })
+  })
+
+  it('should handle global_replace with zero replacements', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([], 0)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    const r = await client.callTool({
+      name: 'global_replace',
+      arguments: {
+        query: 'nonexistent',
+        replace_with: 'anything',
+      },
+    })
+    expect(r.structuredContent).toStrictEqual({
+      success: true,
+      replacementCount: 0,
+      message: 'Successfully replaced 0 occurrences.',
+    })
+  })
+
+  it('should use default values for optional global_find parameters', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([])
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    await client.callTool({
+      name: 'global_find',
+      arguments: {
+        query: 'test',
+        // Omit optional parameters to test defaults
+      },
+    })
+
+    // Verify the provider was called with default options
+    expect(globalFindProvider.globalFind).toHaveBeenCalledWith('test', {
+      caseSensitive: false,
+      exactMatch: false,
+      regexMode: false,
+    })
+  })
+
+  it('should use default values for optional global_replace parameters', async () => {
+    const server = createMockServer()
+    const globalFindProvider = createMockGlobalFindProvider([], 0)
+    const capabilities: IdeCapabilities = {
+      fileAccess: createMockFileAccess(),
+      globalFind: globalFindProvider,
+    }
+
+    const { success } = installMcpLspDriver({ server, capabilities })
+    expect(success).toBeTruthy()
+
+    const client = await createAndConnectMockClient(server)
+    await client.callTool({
+      name: 'global_replace',
+      arguments: {
+        query: 'test',
+        replace_with: 'replacement',
+        // Omit optional parameters to test defaults
+      },
+    })
+
+    // Verify the provider was called with default options
+    expect(globalFindProvider.globalReplace).toHaveBeenCalledWith(
+      'test',
+      'replacement',
+      {
+        caseSensitive: false,
+        exactMatch: false,
+        regexMode: false,
+      },
+    )
   })
 })
